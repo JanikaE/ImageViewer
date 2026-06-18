@@ -291,9 +291,11 @@ private fun ImagePage(
                     contentAlignment = Alignment.Center
                 ) {
                     val filePath = localPath!!
-                    val isWebP = filePath.lowercase().endsWith(".webp")
+                    val isAnimated = filePath.lowercase().let {
+                        it.endsWith(".webp") || it.endsWith(".gif")
+                    }
 
-                    if (isWebP && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    if (isAnimated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         WebpImageViewer(filePath = filePath)
                     } else {
                         AsyncImage(

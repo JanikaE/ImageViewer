@@ -6,6 +6,9 @@ import jcifs.context.SingletonContext
 import jcifs.smb.NtlmPasswordAuthenticator
 import jcifs.smb.SmbFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.net.InetAddress
 
@@ -94,21 +97,15 @@ class SmbRepository {
             val fileList = smbDir.listFiles()?.toList() ?: return@withContext emptyList()
 
             // JCIFS 在特殊字符路径下，getName() 会返回 "父文件夹名+文件名"
-            // 利用已知的 folderPath 提取纯文件名
             val parentLastName = folderPath.substringAfterLast('/').trimEnd('/')
 
-            fileList.mapNotNull { smbFile ->
+            // 先构建基础 ImageFile 列表
+            val items = fileList.mapNotNull { smbFile ->
                 val rawName = smbFile.name.trimEnd('/')
                 val cleanName = cleanFileName(rawName, parentLastName)
 
                 if (cleanName.isEmpty()) return@mapNotNull null
-
-                // 跳过隐藏文件和 "." 目录
-                if (smbFile.isDirectory && (cleanName.startsWith(".") || cleanName == ".")) {
-                    return@mapNotNull null
-                }
-
-                // 仅保留支持的图片格式
+                if (smbFile.isDirectory && (cleanName.startsWith(".") || cleanName == ".")) return@mapNotNull null
                 if (!smbFile.isDirectory) {
                     val ext = cleanName.substringAfterLast('.', "").lowercase()
                     if (ext !in ImageFile.SUPPORTED_FORMATS) return@mapNotNull null
@@ -121,7 +118,45 @@ class SmbRepository {
                     lastModified = smbFile.lastModified(),
                     isDirectory = smbFile.isDirectory
                 )
-            }.sortedWith(compareByDescending<ImageFile> { it.isDirectory }
+            }
+
+            // 为文件夹并发获取第一张图片作为预览
+            val dirs = items.filter { it.isDirectory }
+            if (dirs.isNotEmpty()) {
+                val previewMap = coroutineScope {
+                    dirs.map { dir ->
+                        async {
+                            try {
+                                val subUrl = buildSmbUrl(serverAddress, shareName, dir.path)
+                                val subDir = SmbFile(subUrl, context)
+                                val firstName = subDir.listFiles()
+                                    ?.firstOrNull { f ->
+                                        !f.isDirectory &&
+                                        f.name.substringAfterLast('.', "").lowercase() in ImageFile.SUPPORTED_FORMATS
+                                    }
+                                    ?.name?.trimEnd('/')
+                                if (firstName != null) {
+                                    val clean = cleanFileName(firstName, dir.name)
+                                    dir.path to "smb://$serverAddress/$shareName/${dir.path}/$clean"
+                                } else null
+                            } catch (_: Exception) { null }
+                        }
+                    }.awaitAll().filterNotNull().toMap()
+                }
+
+                if (previewMap.isNotEmpty()) {
+                    return@withContext items.map { item ->
+                        if (item.isDirectory) {
+                            previewMap[item.path]?.let { smbPreviewUrl ->
+                                item.copy(previewPath = smbPreviewUrl)
+                            } ?: item
+                        } else item
+                    }.sortedWith(compareByDescending<ImageFile> { it.isDirectory }
+                        .thenBy { it.name.lowercase() })
+                }
+            }
+
+            items.sortedWith(compareByDescending<ImageFile> { it.isDirectory }
                 .thenBy { it.name.lowercase() })
         } catch (e: Exception) {
             e.printStackTrace()

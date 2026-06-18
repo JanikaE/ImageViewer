@@ -121,6 +121,22 @@ object SmbImageLoader {
         return cacheFile.absolutePath
     }
 
+    /** 获取缓存文件路径（不触发下载），若未缓存返回 null */
+    fun getCachePath(
+        context: Context,
+        serverAddress: String,
+        shareName: String,
+        filePath: String
+    ): String? {
+        val cacheDir = File(context.cacheDir, CACHE_DIR)
+        if (!cacheDir.exists()) return null
+
+        val fileName = filePath.substringAfterLast('/').ifEmpty { filePath }
+        val cacheKey = "${serverAddress}_${shareName}_${filePath}".hashCode().toString(16)
+        val cacheFile = File(cacheDir, "${cacheKey}_${fileName}")
+        return if (cacheFile.exists()) cacheFile.absolutePath else null
+    }
+
     /**
      * 清除SMB缓存
      */

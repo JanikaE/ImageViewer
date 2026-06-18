@@ -21,6 +21,10 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.ui.viewmodel.NetworkBrowserViewModel
+import com.janika.imageviewer.util.SmbImageLoader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -165,8 +169,12 @@ fun NetworkBrowserScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(state.files, key = { it.path }) { file ->
+                        val cachePath = if (!file.isDirectory)
+                            SmbImageLoader.getCachePath(context, state.serverAddress, state.shareName, file.path)
+                        else null
                         NetworkFileGridItem(
                             file = file,
+                            cachePath = cachePath,
                             onFolderClick = {
                                 viewModel.navigateToFolder(file.path, file.name)
                             },
@@ -205,6 +213,7 @@ fun NetworkBrowserScreen(
 @Composable
 private fun NetworkFileGridItem(
     file: ImageFile,
+    cachePath: String?,
     onFolderClick: () -> Unit,
     onImageClick: () -> Unit
 ) {
@@ -226,32 +235,53 @@ private fun NetworkFileGridItem(
             contentAlignment = Alignment.Center
         ) {
             if (file.isDirectory) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Folder,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.primary
+                // 文件夹：有预览图则缓存并显示，否则显示图标
+                if (file.previewPath != null) {
+                    NetworkFolderPreview(
+                        smbPreviewUrl = file.previewPath!!,
+                        folderName = file.name
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = file.name,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = file.name,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             } else {
-                // 占位图 - 网络文件使用 URL 加载（在实际浏览时已通过 smbUrl 传递）
-                Icon(
-                    Icons.Default.Image,
-                    contentDescription = file.name,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
+                // 图片文件：有缓存则显示缩略图，否则显示占位图标
+                if (cachePath != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(File(cachePath))
+                            .size(256)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = file.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Image,
+                        contentDescription = file.name,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -271,6 +301,66 @@ private fun NetworkFileGridItem(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 网络文件夹预览图 — 缓存 SMB 图片到本地后显示
+ */
+@Composable
+private fun NetworkFolderPreview(
+    smbPreviewUrl: String,
+    folderName: String
+) {
+    val context = LocalContext.current
+    var cachedPath by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(smbPreviewUrl) {
+        cachedPath = withContext(Dispatchers.IO) {
+            SmbImageLoader.cacheSmbFile(context, smbPreviewUrl)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (cachedPath != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(File(cachedPath!!))
+                    .size(256)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = folderName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        // 文件夹名标签
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(4.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                shape = MaterialTheme.shapes.extraSmall
+            ) {
+                Text(
+                    text = folderName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
             }
         }
     }

@@ -52,12 +52,14 @@ class LocalFileRepository {
                 }
             }
             ?.map { file ->
+                val preview = if (file.isDirectory) findFirstImage(file) else null
                 ImageFile(
                     name = file.name,
                     path = file.absolutePath,
                     size = file.length(),
                     lastModified = file.lastModified(),
-                    isDirectory = file.isDirectory
+                    isDirectory = file.isDirectory,
+                    previewPath = preview
                 )
             }
             ?.sortedWith(compareByDescending<ImageFile> { it.isDirectory }.thenBy { it.name.lowercase() })
@@ -73,4 +75,14 @@ class LocalFileRepository {
     }
 
     fun getFileForPath(path: String): File = File(path)
+
+    /** 在文件夹中查找第一张支持的图片 */
+    private fun findFirstImage(dir: File): String? {
+        return dir.listFiles()
+            ?.sortedBy { it.name.lowercase() }
+            ?.firstOrNull { file ->
+                !file.isDirectory && file.name.substringAfterLast('.', "").lowercase() in ImageFile.SUPPORTED_FORMATS
+            }
+            ?.absolutePath
+    }
 }

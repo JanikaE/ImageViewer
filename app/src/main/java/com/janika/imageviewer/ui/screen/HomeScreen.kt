@@ -72,7 +72,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "PNG · JPG · JPEG · WebP",
+                        text = "PNG · JPG · JPEG · WebP · GIF",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -8,7 +8,9 @@ data class ImageFile(
     val path: String,
     val size: Long,
     val lastModified: Long,
-    val isDirectory: Boolean
+    val isDirectory: Boolean,
+    /** 文件夹的第一张图片预览路径（仅本地文件夹，网络文件夹为 null） */
+    val previewPath: String? = null
 ) {
     val extension: String
         get() = if (isDirectory) "" else name.substringAfterLast('.', "").lowercase()
@@ -20,6 +22,6 @@ data class ImageFile(
         get() = isDirectory || extension in SUPPORTED_FORMATS
 
     companion object {
-        val SUPPORTED_FORMATS = setOf("png", "jpg", "jpeg", "webp")
+        val SUPPORTED_FORMATS = setOf("png", "jpg", "jpeg", "webp", "gif")
     }
 }
