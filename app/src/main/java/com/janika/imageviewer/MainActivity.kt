@@ -82,6 +82,13 @@ fun ImageViewerApp() {
 
         composable("settings") {
             SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onNavigateToCache = { navController.navigate("cache") }
+            )
+        }
+
+        composable("cache") {
+            CacheManagementScreen(
                 onBack = { navController.popBackStack() }
             )
         }

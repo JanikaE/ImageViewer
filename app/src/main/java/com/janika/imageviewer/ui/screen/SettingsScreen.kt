@@ -22,7 +22,8 @@ import jcifs.smb.SmbFile
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToCache: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = remember { PreferencesManager(context) }
@@ -227,6 +228,38 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // ── 缓存管理 ──
+            Text(
+                text = "缓存",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Card(
+                onClick = onNavigateToCache
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("缓存管理", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "查看和清除本地图片缓存",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
