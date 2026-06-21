@@ -138,7 +138,7 @@ fun ImageViewerScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f)
                     )
                 )
             }
@@ -337,7 +337,7 @@ private fun BottomPageBar(
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 4.dp
     ) {
         Row(
