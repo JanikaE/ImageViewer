@@ -45,6 +45,7 @@ import java.io.File
 fun ImageViewerScreen(
     imageList: List<ImageItem>,
     initialIndex: Int = 0,
+    swipeRightToLeft: Boolean = false,
     onBack: () -> Unit
 ) {
     if (imageList.isEmpty()) {
@@ -154,6 +155,7 @@ fun ImageViewerScreen(
                 BottomPageBar(
                     currentPage = currentPage,
                     totalPages = imageList.size,
+                    swipeRightToLeft = swipeRightToLeft,
                     onPageChange = { page ->
                         scope.launch { pagerState.animateScrollToPage(page) }
                     },
@@ -321,9 +323,17 @@ private fun ImagePage(
 private fun BottomPageBar(
     currentPage: Int,
     totalPages: Int,
+    swipeRightToLeft: Boolean = false,
     onPageChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // RTL 模式：页码按原始顺序显示，滑块右侧=第一张
+    val displayPage = if (swipeRightToLeft) totalPages - currentPage else currentPage + 1
+    val sliderValue = currentPage.toFloat()
+    val onSliderChange: (Float) -> Unit = { value ->
+        onPageChange(value.toInt().coerceIn(0, totalPages - 1))
+    }
+
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.medium,
@@ -334,17 +344,15 @@ private fun BottomPageBar(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 页码文字
             Text(
-                text = "${currentPage + 1} / $totalPages",
+                text = "$displayPage / $totalPages",
                 style = MaterialTheme.typography.labelMedium,
                 modifier = Modifier.width(56.dp)
             )
 
-            // 拖动条
             Slider(
-                value = currentPage.toFloat(),
-                onValueChange = { onPageChange(it.toInt()) },
+                value = sliderValue,
+                onValueChange = onSliderChange,
                 valueRange = 0f..(totalPages - 1).coerceAtLeast(0).toFloat(),
                 steps = (totalPages - 2).coerceAtLeast(0),
                 modifier = Modifier.weight(1f)

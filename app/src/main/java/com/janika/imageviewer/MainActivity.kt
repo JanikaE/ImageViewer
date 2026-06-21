@@ -92,6 +92,7 @@ fun ImageViewerApp() {
         ImageViewerScreen(
             imageList = displayList,
             initialIndex = displayIndex.coerceIn(0, displayList.lastIndex),
+            swipeRightToLeft = swipeRightToLeft,
             onBack = {
                 rawImageList = emptyList()
             }
