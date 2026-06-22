@@ -15,6 +15,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.*
@@ -33,6 +34,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageItem
+import com.janika.imageviewer.util.MediaSaver
 import com.janika.imageviewer.util.SmbImageLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -60,6 +62,8 @@ fun ImageViewerScreen(
     val currentPage = pagerState.currentPage
     val currentItem = imageList.getOrNull(currentPage) ?: return
 
+    val context = LocalContext.current
+
     // 每页独立缩放比例（父级管理，供工具栏按钮修改）
     val pageScales = remember { mutableStateMapOf<Int, Float>() }
     val currentScale = pageScales[currentPage] ?: 1f
@@ -67,6 +71,7 @@ fun ImageViewerScreen(
     // 控件自动隐藏
     var showControls by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(currentPage) {
         showControls = true
         delay(3000)
@@ -122,6 +127,36 @@ fun ImageViewerScreen(
                     },
                     actions = {
                         IconButton(onClick = {
+                            scope.launch {
+                                val item = imageList[currentPage]
+                                val sourcePath: String? = if (item.isNetworkFile) {
+                                    // 网络文件：先确保已缓存
+                                    if (item.smbUrl != null) {
+                                        withContext(Dispatchers.IO) {
+                                            SmbImageLoader.cacheSmbFile(
+                                                context, item.smbUrl,
+                                                item.smbUsername, item.smbPassword,
+                                                item.smbServerAddress, item.smbShareName
+                                            )
+                                        }
+                                    } else null
+                                } else item.path
+
+                                if (sourcePath != null) {
+                                    val ok = withContext(Dispatchers.IO) {
+                                        MediaSaver.saveToGallery(context, File(sourcePath), item.name)
+                                    }
+                                    snackbarHostState.showSnackbar(
+                                        if (ok) "已保存到相册" else "保存失败"
+                                    )
+                                } else {
+                                    snackbarHostState.showSnackbar("无法获取图片文件")
+                                }
+                            }
+                        }) {
+                            Icon(Icons.Default.SaveAlt, contentDescription = "保存到相册")
+                        }
+                        IconButton(onClick = {
                             pageScales[currentPage] = (currentScale * 1.5f).coerceAtMost(5f)
                         }) {
                             Icon(Icons.Default.ZoomIn, contentDescription = "放大")
@@ -164,6 +199,12 @@ fun ImageViewerScreen(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 )
             }
+
+            // 保存反馈
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
         }
     }
 }
