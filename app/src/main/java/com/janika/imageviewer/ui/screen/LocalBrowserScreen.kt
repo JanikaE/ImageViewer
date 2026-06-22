@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
+import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.ui.viewmodel.LocalBrowserViewModel
 import java.io.File
 
@@ -32,6 +33,9 @@ fun LocalBrowserScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val prefs = remember { PreferencesManager(context) }
+    val labelFontScale = prefs.loadLabelFontScale()
+    val labelMaxLines = prefs.loadLabelMaxLines()
 
     // 系统返回键与左上角返回行为一致
     val canGoBack = state.hasParent || !state.isRootLevel
@@ -99,6 +103,8 @@ fun LocalBrowserScreen(
                 items(state.files, key = { it.path }) { file ->
                     FileGridItem(
                         file = file,
+                        labelFontScale = labelFontScale,
+                        labelMaxLines = labelMaxLines,
                         onClick = {
                             if (file.isDirectory) {
                                 viewModel.navigateTo(file.path, file.name)
@@ -119,9 +125,19 @@ fun LocalBrowserScreen(
 @Composable
 private fun FileGridItem(
     file: ImageFile,
+    labelFontScale: Float,
+    labelMaxLines: Int,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
+
+    // 计算字号
+    val nameStyle = MaterialTheme.typography.bodySmall.copy(
+        fontSize = MaterialTheme.typography.bodySmall.fontSize * labelFontScale
+    )
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(
+        fontSize = MaterialTheme.typography.labelSmall.fontSize * labelFontScale
+    )
 
     Card(
         modifier = Modifier
@@ -156,16 +172,28 @@ private fun FileGridItem(
                             .padding(4.dp)
                     ) {
                         Surface(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                             shape = MaterialTheme.shapes.extraSmall
                         ) {
-                            Text(
-                                text = file.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = file.name,
+                                    maxLines = labelMaxLines,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = labelStyle,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
                         }
                     }
                 } else {
@@ -180,12 +208,21 @@ private fun FileGridItem(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = file.name,
-                            maxLines = 2,
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                text = file.name,
+                            maxLines = labelMaxLines,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                            style = nameStyle
+                            )
+                        }
                     }
                 }
             } else {
@@ -215,14 +252,14 @@ private fun FileGridItem(
                         )
                 ) {
                     Surface(
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
                         shape = MaterialTheme.shapes.extraSmall
                     ) {
                         Text(
                             text = file.name,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = labelStyle,
+                            maxLines = labelMaxLines,
+                            color = androidx.compose.ui.graphics.Color.White,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }

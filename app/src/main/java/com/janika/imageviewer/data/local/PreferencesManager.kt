@@ -56,6 +56,24 @@ class PreferencesManager(context: Context) {
         settingsPrefs.edit().putBoolean(KEY_SWIPE_DIRECTION, rightToLeft).apply()
     }
 
+    /** 文件名标签字号倍率，默认 1.5 */
+    fun loadLabelFontScale(): Float {
+        return settingsPrefs.getFloat(KEY_LABEL_FONT_SCALE, 1.5f)
+    }
+
+    fun saveLabelFontScale(scale: Float) {
+        settingsPrefs.edit().putFloat(KEY_LABEL_FONT_SCALE, scale).apply()
+    }
+
+    /** 文件名最多显示行数，默认 2 */
+    fun loadLabelMaxLines(): Int {
+        return settingsPrefs.getInt(KEY_LABEL_MAX_LINES, 2)
+    }
+
+    fun saveLabelMaxLines(lines: Int) {
+        settingsPrefs.edit().putInt(KEY_LABEL_MAX_LINES, lines).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "smb_connection_prefs"
         private const val SETTINGS_PREFS_NAME = "app_settings"
@@ -63,5 +81,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_USERNAME = "username"
         private const val KEY_PASSWORD = "password"
         private const val KEY_SWIPE_DIRECTION = "swipe_right_to_left"
+        private const val KEY_LABEL_FONT_SCALE = "label_font_scale"
+        private const val KEY_LABEL_MAX_LINES = "label_max_lines"
     }
 }

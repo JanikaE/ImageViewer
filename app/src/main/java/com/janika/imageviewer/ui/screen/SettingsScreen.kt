@@ -93,6 +93,77 @@ fun SettingsScreen(
                 }
             }
 
+            // ── 显示 ──
+            Text(
+                text = "显示",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            var labelFontScale by remember { mutableFloatStateOf(prefs.loadLabelFontScale()) }
+            var labelMaxLines by remember { mutableIntStateOf(prefs.loadLabelMaxLines()) }
+
+            Card {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("文件名标签字号", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("${"%.1f".format(labelFontScale)}x", style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.width(36.dp))
+                        Slider(
+                            value = labelFontScale,
+                            onValueChange = {
+                                labelFontScale = it
+                                prefs.saveLabelFontScale(it)
+                            },
+                            valueRange = 1f..2.5f,
+                            steps = 5,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text("预览", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = (MaterialTheme.typography.labelSmall.fontSize * labelFontScale))
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Card {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("文件名最多显示行数", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("$labelMaxLines 行", style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.width(36.dp))
+                        Slider(
+                            value = labelMaxLines.toFloat(),
+                            onValueChange = {
+                                labelMaxLines = it.toInt()
+                                prefs.saveLabelMaxLines(it.toInt())
+                            },
+                            valueRange = 1f..4f,
+                            steps = 2,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
             // ── 网络共享 ──
             Text(
                 text = "网络共享",

@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
+import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.ui.viewmodel.NetworkBrowserViewModel
 import com.janika.imageviewer.util.SmbImageLoader
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,9 @@ fun NetworkBrowserScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val prefs = remember { PreferencesManager(context) }
+    val labelFontScale = prefs.loadLabelFontScale()
+    val labelMaxLines = prefs.loadLabelMaxLines()
 
     // 拦截系统返回键
     BackHandler(enabled = state.isConnected) {
@@ -179,6 +183,8 @@ fun NetworkBrowserScreen(
                         NetworkFileGridItem(
                             file = file,
                             cachePath = cachePath,
+                            labelFontScale = labelFontScale,
+                            labelMaxLines = labelMaxLines,
                             onFolderClick = {
                                 viewModel.navigateToFolder(file.path, file.name)
                             },
@@ -218,10 +224,19 @@ fun NetworkBrowserScreen(
 private fun NetworkFileGridItem(
     file: ImageFile,
     cachePath: String?,
+    labelFontScale: Float,
+    labelMaxLines: Int,
     onFolderClick: () -> Unit,
     onImageClick: () -> Unit
 ) {
     val context = LocalContext.current
+
+    val nameStyle = MaterialTheme.typography.bodySmall.copy(
+        fontSize = MaterialTheme.typography.bodySmall.fontSize * labelFontScale
+    )
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(
+        fontSize = MaterialTheme.typography.labelSmall.fontSize * labelFontScale
+    )
 
     Card(
         modifier = Modifier
@@ -243,7 +258,9 @@ private fun NetworkFileGridItem(
                 if (file.previewPath != null) {
                     NetworkFolderPreview(
                         smbPreviewUrl = file.previewPath!!,
-                        folderName = file.name
+                        folderName = file.name,
+                        labelFontScale = labelFontScale,
+                        labelMaxLines = labelMaxLines
                     )
                 } else {
                     Column(
@@ -257,12 +274,21 @@ private fun NetworkFileGridItem(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = file.name,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                text = file.name,
+                                maxLines = labelMaxLines,
+                                overflow = TextOverflow.Ellipsis,
+                                style = nameStyle
+                            )
+                        }
                     }
                 }
             } else {
@@ -293,14 +319,15 @@ private fun NetworkFileGridItem(
                         .padding(4.dp)
                 ) {
                     Surface(
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
                         shape = MaterialTheme.shapes.extraSmall
                     ) {
                         Text(
                             text = file.name,
-                            maxLines = 1,
+                            style = labelStyle,
+                            maxLines = labelMaxLines,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.ui.graphics.Color.White,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
@@ -316,7 +343,9 @@ private fun NetworkFileGridItem(
 @Composable
 private fun NetworkFolderPreview(
     smbPreviewUrl: String,
-    folderName: String
+    folderName: String,
+    labelFontScale: Float,
+    labelMaxLines: Int
 ) {
     val context = LocalContext.current
     var cachedPath by remember { mutableStateOf<String?>(null) }
@@ -326,6 +355,10 @@ private fun NetworkFolderPreview(
             SmbImageLoader.cacheSmbFile(context, smbPreviewUrl)
         }
     }
+
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(
+        fontSize = MaterialTheme.typography.labelSmall.fontSize * labelFontScale
+    )
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (cachedPath != null) {
@@ -355,16 +388,28 @@ private fun NetworkFolderPreview(
                 .padding(4.dp)
         ) {
             Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                 shape = MaterialTheme.shapes.extraSmall
             ) {
-                Text(
-                    text = folderName,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        text = folderName,
+                        maxLines = labelMaxLines,
+                        overflow = TextOverflow.Ellipsis,
+                        style = labelStyle,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
             }
         }
     }
