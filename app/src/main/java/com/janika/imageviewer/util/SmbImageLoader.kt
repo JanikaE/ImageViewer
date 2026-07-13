@@ -47,7 +47,8 @@ object SmbImageLoader {
         username: String? = null,
         password: String? = null,
         serverAddress: String? = null,
-        shareName: String? = null
+        shareName: String? = null,
+        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
     ): String? = withContext(Dispatchers.IO) {
         try {
             migrateOldCache(context)
@@ -84,7 +85,7 @@ object SmbImageLoader {
                 try {
                     smbFile = SmbFile(smbUrl, sharedCtx)
                     if (smbFile.exists() && !smbFile.isDirectory) {
-                        return@withContext readAndCache(smbFile, cacheFile)
+                        return@withContext readAndCache(smbFile, cacheFile, onProgress)
                     }
                 } catch (e: Exception) {
                     lastException = e
@@ -101,7 +102,7 @@ object SmbImageLoader {
                     if (smbFile.exists() && !smbFile.isDirectory) {
                         // 更新共享上下文以供后续使用
                         com.janika.imageviewer.data.repository.SmbRepository.updateSharedContext(authContext)
-                        return@withContext readAndCache(smbFile, cacheFile)
+                        return@withContext readAndCache(smbFile, cacheFile, onProgress)
                     }
                 } catch (e: Exception) {
                     lastException = e
@@ -116,7 +117,7 @@ object SmbImageLoader {
                 smbFile = SmbFile(smbUrl, authContext)
                 if (smbFile.exists() && !smbFile.isDirectory) {
                     com.janika.imageviewer.data.repository.SmbRepository.updateSharedContext(authContext)
-                    return@withContext readAndCache(smbFile, cacheFile)
+                    return@withContext readAndCache(smbFile, cacheFile, onProgress)
                 }
             } catch (e: Exception) {
                 lastException = e
@@ -131,10 +132,22 @@ object SmbImageLoader {
         }
     }
 
-    private fun readAndCache(smbFile: SmbFile, cacheFile: File): String {
+    private fun readAndCache(
+        smbFile: SmbFile,
+        cacheFile: File,
+        onProgress: ((Long, Long) -> Unit)?
+    ): String {
+        val total = smbFile.length()
+        var downloaded = 0L
         SmbFileInputStream(smbFile).use { input ->
             FileOutputStream(cacheFile).use { output ->
-                input.copyTo(output)
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                    downloaded += bytesRead
+                    onProgress?.invoke(downloaded, total)
+                }
             }
         }
         return cacheFile.absolutePath

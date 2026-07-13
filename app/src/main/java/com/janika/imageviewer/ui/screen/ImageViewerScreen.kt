@@ -229,6 +229,8 @@ private fun ImagePage(
     var localPath by remember { mutableStateOf(if (item.isNetworkFile) null else item.path) }
     var isLoading by remember { mutableStateOf(item.isNetworkFile) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var downloadProgress by remember { mutableLongStateOf(0L) }
+    var downloadTotal by remember { mutableLongStateOf(0L) }
 
     // 同步父级传来的 scale（工具栏按钮触发）
     LaunchedEffect(parentScale) {
@@ -253,6 +255,8 @@ private fun ImagePage(
         if (item.isNetworkFile && item.smbUrl != null) {
             isLoading = true
             errorMessage = null
+            downloadProgress = 0L
+            downloadTotal = 0L
             val cached = withContext(Dispatchers.IO) {
                 SmbImageLoader.cacheSmbFile(
                     context = context,
@@ -260,7 +264,11 @@ private fun ImagePage(
                     username = item.smbUsername,
                     password = item.smbPassword,
                     serverAddress = item.smbServerAddress,
-                    shareName = item.smbShareName
+                    shareName = item.smbShareName,
+                    onProgress = { done, total ->
+                        downloadProgress = done
+                        downloadTotal = total
+                    }
                 )
             }
             if (cached != null) {
@@ -279,10 +287,26 @@ private fun ImagePage(
     ) {
         when {
             isLoading -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(32.dp)
+                ) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("正在加载...")
+                    Text("正在下载...")
+                    if (downloadTotal > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${formatSize(downloadProgress)} / ${formatSize(downloadTotal)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { if (downloadTotal > 0) downloadProgress.toFloat() / downloadTotal else 0f },
+                            modifier = Modifier.fillMaxWidth(0.6f)
+                        )
+                    }
                 }
             }
             errorMessage != null -> {
@@ -400,6 +424,13 @@ private fun BottomPageBar(
             )
         }
     }
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes <= 0 -> "0 B"
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
 }
 
 /**
