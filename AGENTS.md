@@ -21,11 +21,15 @@ UI strings, code comments, and git commits are in Chinese (app name "图片阅�
 - Local browser reads the filesystem directly with `java.io.File` on `/storage/emulated/0` (`LocalFileRepository`); folder previews are the first supported image found inside.
 - Manifest sets `usesCleartextTraffic="true"` (required for SMB) and declares storage/network permissions — the manifest is the source of truth for API-level permission splits (READ_MEDIA_IMAGES 33+, READ_EXTERNAL_STORAGE ≤32).
 
-## SMB layer (hard-won quirks — don't "fix")
-- `SmbRepository` keeps a process-wide singleton `CIFSContext` via companion `getSharedContext()`/`updateSharedContext()`; `SmbImageLoader` reuses it as its first auth strategy (`SmbImageLoader.kt:77`), then falls back to explicit credentials, then guest.
-- JCIFS bug: with special characters in a path, `SmbFile.name` returns "parentFolderName + fileName". `SmbRepository.cleanFileName()` strips the known parent prefix (`SmbRepository.kt:172`) — preserve this workaround or browsing breaks on such shares.
-- SMB images are downloaded to `context.cacheDir/smb_cache/{server_share}/{pathHash}_{filename}` and cached until cleared (`SmbImageLoader`, cache-management UI reads this layout).
-- `connect()` validates the share with `SmbFile(...).exists()`; `isConnected()` just checks for a non-null context.
+## SMB layer (SMBJ — hard-won quirks, don't "fix")
+- Uses **SMBJ 0.14.0** (`com.hierynomus:smbj`) + `slf4j-nop` (Android 无默认绑定). `SmbSessionManager` (singleton) owns `SMBClient`→`Connection`→`SMBSession`; auth happens once in `connect()` via `AuthenticationContext`, and `getDiskShare(shareName)` lazily `connectShare`s + caches the `DiskShare`. `SmbRepository` (browse/list) and `SmbImageLoader` (download) both reuse it — no per-file auth fallback chain.
+- **共享名不自动枚举**：SMBJ 没有枚举服务器共享的 API。用户在设置里手动维护共享名列表（`PreferencesManager.SmbConnectionConfig.shareNames`，JSON 序列化存 SharedPreferences）；网络页直接显示这些共享名。
+- **SMBJ 读取语义**：`DiskShare.openFile(path, GENERIC_READ, ...)` 返回 `File`，用 `file.read(buffer, offset)` 按偏移顺序读（-1 为 EOF）；SMBJ 内部把单次读限制为 `min(config, server.maxReadSize)`，**大缓冲不会触发 INVALID_PARAMETER**（这是选 SMBJ 换掉 jcifs-ng 的原因之一）。
+- 注意：`File` **没有** `getLength()`（0.14.0），取文件大小用 `file.getFileInformation(FileStandardInformation::class.java).endOfFile`。
+- 特殊字符路径：SMBJ 的 `FileIdBothDirectoryInformation.fileName` 返回服务器真实 Unicode 名，`jcifs-ng` 时代的 `cleanFileName()` 前缀剥离 workaround 已删除。
+- SMB 图片下载到 `context.cacheDir/smb_cache/{server_share}/{pathHash}_{filename}`，先写 `.tmp` 再原子重命名，失败删除半成品；缓存管理 UI 读取该布局。
+- 不要再看 jcifs-ng（`eu.agno3.jcifs`）；`transaction_buf_size` 调大导致 `STATUS_INVALID_PARAMETER` 的历史问题已随库更换消除。
+- 大图下载用**并发分段读**：文件 > 512KB 时按设置项 `segment_concurrency`（`PreferencesManager`，默认 5，范围 1..16，设置页"下载"区块）切成 N 段并发 `File.read`，用 `FileChannel` 按偏移写本地 `.tmp`；小图走顺序读。分段下载完成会 `Log.i` 打印实测 MB/s。
 
 ## Testing
 - Only Gradle-template boilerplate exists (`ExampleUnitTest`, `ExampleInstrumentedTest`). No meaningful test suite or custom lint/typecheck config. Any SMB verification requires a real LAN share; the rest can be reasoned about statically.

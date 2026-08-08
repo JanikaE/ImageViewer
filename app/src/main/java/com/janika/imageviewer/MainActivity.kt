@@ -69,9 +69,9 @@ fun ImageViewerApp() {
 
         composable("network") {
             NetworkBrowserScreen(
-                onImageClick = { files, index, serverAddress, shareName, username, password ->
+                onImageClick = { files, index, serverAddress, shareName ->
                     rawImageList = ImageItem.fromNetworkFiles(
-                        files, serverAddress, shareName, username, password
+                        files, serverAddress, shareName
                     )
                     rawIndex = index
                 },

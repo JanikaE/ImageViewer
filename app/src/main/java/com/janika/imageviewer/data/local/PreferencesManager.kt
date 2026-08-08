@@ -16,7 +16,9 @@ class PreferencesManager(context: Context) {
     data class SmbConnectionConfig(
         val serverAddress: String,
         val username: String,
-        val password: String
+        val password: String,
+        /** 已配置的共享名列表（手动维护，不做自动枚举） */
+        val shareNames: List<String> = emptyList()
     )
 
     fun saveConfig(config: SmbConnectionConfig) {
@@ -24,6 +26,7 @@ class PreferencesManager(context: Context) {
             .putString(KEY_SERVER_ADDRESS, config.serverAddress)
             .putString(KEY_USERNAME, config.username)
             .putString(KEY_PASSWORD, config.password)
+            .putString(KEY_SHARE_NAMES, encodeShareNames(config.shareNames))
             .apply()
     }
 
@@ -33,7 +36,8 @@ class PreferencesManager(context: Context) {
         return SmbConnectionConfig(
             serverAddress = server,
             username = prefs.getString(KEY_USERNAME, "") ?: "",
-            password = prefs.getString(KEY_PASSWORD, "") ?: ""
+            password = prefs.getString(KEY_PASSWORD, "") ?: "",
+            shareNames = loadShareNames()
         )
     }
 
@@ -42,7 +46,34 @@ class PreferencesManager(context: Context) {
             .remove(KEY_SERVER_ADDRESS)
             .remove(KEY_USERNAME)
             .remove(KEY_PASSWORD)
+            .remove(KEY_SHARE_NAMES)
             .apply()
+    }
+
+    /** 加载已保存的共享名列表 */
+    fun loadShareNames(): List<String> {
+        return decodeShareNames(prefs.getString(KEY_SHARE_NAMES, null))
+    }
+
+    /** 保存共享名列表 */
+    fun saveShareNames(shareNames: List<String>) {
+        prefs.edit().putString(KEY_SHARE_NAMES, encodeShareNames(shareNames)).apply()
+    }
+
+    private fun encodeShareNames(names: List<String>): String {
+        val arr = org.json.JSONArray()
+        names.forEach { arr.put(it) }
+        return arr.toString()
+    }
+
+    private fun decodeShareNames(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     // ── 应用设置 ──
@@ -74,14 +105,25 @@ class PreferencesManager(context: Context) {
         settingsPrefs.edit().putInt(KEY_LABEL_MAX_LINES, lines).apply()
     }
 
+    /** 大图并发分段读取的并发度，默认 5，范围 1..16 */
+    fun loadSegmentConcurrency(): Int {
+        return settingsPrefs.getInt(KEY_SEGMENT_CONCURRENCY, 5).coerceIn(1, 16)
+    }
+
+    fun saveSegmentConcurrency(concurrency: Int) {
+        settingsPrefs.edit().putInt(KEY_SEGMENT_CONCURRENCY, concurrency.coerceIn(1, 16)).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "smb_connection_prefs"
         private const val SETTINGS_PREFS_NAME = "app_settings"
         private const val KEY_SERVER_ADDRESS = "server_address"
         private const val KEY_USERNAME = "username"
         private const val KEY_PASSWORD = "password"
+        private const val KEY_SHARE_NAMES = "share_names"
         private const val KEY_SWIPE_DIRECTION = "swipe_right_to_left"
         private const val KEY_LABEL_FONT_SCALE = "label_font_scale"
         private const val KEY_LABEL_MAX_LINES = "label_max_lines"
+        private const val KEY_SEGMENT_CONCURRENCY = "segment_concurrency"
     }
 }

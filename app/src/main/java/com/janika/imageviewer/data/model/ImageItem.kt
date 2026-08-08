@@ -10,12 +10,6 @@ data class ImageItem(
     val name: String,
     /** 是否为网络文件 */
     val isNetworkFile: Boolean = false,
-    /** SMB 完整 URL（仅网络文件） */
-    val smbUrl: String? = null,
-    /** SMB 用户名（仅网络文件） */
-    val smbUsername: String? = null,
-    /** SMB 密码（仅网络文件） */
-    val smbPassword: String? = null,
     /** SMB 服务器地址（仅网络文件） */
     val smbServerAddress: String? = null,
     /** SMB 共享名（仅网络文件） */
@@ -37,20 +31,13 @@ data class ImageItem(
         fun fromNetworkFiles(
             files: List<ImageFile>,
             serverAddress: String,
-            shareName: String,
-            username: String?,
-            password: String?
+            shareName: String
         ): List<ImageItem> {
             return files.filter { !it.isDirectory }.map { file ->
-                val cleanPath = file.path.trimStart('/')
-                val smbUrl = "smb://$serverAddress/$shareName/$cleanPath"
                 ImageItem(
                     path = file.path,
                     name = file.name,
                     isNetworkFile = true,
-                    smbUrl = smbUrl,
-                    smbUsername = username,
-                    smbPassword = password,
                     smbServerAddress = serverAddress,
                     smbShareName = shareName
                 )

@@ -12,12 +12,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.janika.imageviewer.data.local.PreferencesManager
+import com.janika.imageviewer.data.repository.SmbSessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import jcifs.context.SingletonContext
-import jcifs.smb.NtlmPasswordAuthenticator
-import jcifs.smb.SmbFile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +35,8 @@ fun SettingsScreen(
     var serverAddress by remember { mutableStateOf(savedConfig?.serverAddress ?: "") }
     var username by remember { mutableStateOf(savedConfig?.username ?: "") }
     var password by remember { mutableStateOf(savedConfig?.password ?: "") }
+    var shareNames by remember { mutableStateOf(savedConfig?.shareNames ?: emptyList()) }
+    var newShareName by remember { mutableStateOf("") }
     var isConnecting by remember { mutableStateOf(false) }
     var connectError by remember { mutableStateOf<String?>(null) }
     var connectSuccess by remember { mutableStateOf(false) }
@@ -164,6 +164,50 @@ fun SettingsScreen(
                 }
             }
 
+            // ── 下载 ──
+            Text(
+                text = "下载",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            var segmentConcurrency by remember { mutableIntStateOf(prefs.loadSegmentConcurrency()) }
+
+            Card {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("并发分段读取", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("$segmentConcurrency", style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.width(24.dp))
+                        Slider(
+                            value = segmentConcurrency.toFloat(),
+                            onValueChange = {
+                                segmentConcurrency = it.toInt()
+                                prefs.saveSegmentConcurrency(it.toInt())
+                            },
+                            valueRange = 1f..16f,
+                            steps = 14,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        text = "大图下载时并行读取的段数，数值越高速度越快、占带宽越多",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
             // ── 网络共享 ──
             Text(
                 text = "网络共享",
@@ -210,6 +254,81 @@ fun SettingsScreen(
                         enabled = !isConnecting
                     )
 
+                    // ── 共享名列表（手动配置） ──
+                    Text(
+                        text = "共享名列表",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    shareNames.forEach { share ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = share,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = {
+                                shareNames = shareNames.filter { it != share }
+                                prefs.saveShareNames(shareNames)
+                                connectSuccess = false
+                            }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "删除",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = newShareName,
+                            onValueChange = { newShareName = it; connectSuccess = false },
+                            label = { Text("共享名") },
+                            placeholder = { Text("例如: doujinshi") },
+                            leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            enabled = !isConnecting
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                val name = newShareName.trim()
+                                if (name.isNotEmpty() && !shareNames.contains(name)) {
+                                    shareNames = shareNames + name
+                                    prefs.saveShareNames(shareNames)
+                                    newShareName = ""
+                                    connectSuccess = false
+                                }
+                            },
+                            enabled = !isConnecting && newShareName.isNotBlank()
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null)
+                            Text("添加")
+                        }
+                    }
+                    if (shareNames.isEmpty()) {
+                        Text(
+                            text = "还没有配置共享名，添加后可在网络页直接打开",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     // 连接状态
                     if (connectSuccess) {
                         Text(
@@ -241,19 +360,13 @@ fun SettingsScreen(
                                 connectSuccess = false
                                 scope.launch {
                                     val ok = withContext(Dispatchers.IO) {
-                                        try {
-                                            val baseCtx = SingletonContext.getInstance()
-                                            val auth = if (username.isNotEmpty()) {
-                                                NtlmPasswordAuthenticator("", username, password)
-                                            } else {
-                                                NtlmPasswordAuthenticator(null, "guest", "")
-                                            }
-                                            val ctx = baseCtx.withCredentials(auth)
-                                            val test = SmbFile("smb://$serverAddress/", ctx)
-                                            test.list().isNotEmpty()
-                                        } catch (e: Exception) {
-                                            false
-                                        }
+                                        SmbSessionManager.testConnection(
+                                            serverAddress = serverAddress,
+                                            username = username.ifEmpty { null },
+                                            password = password.ifEmpty { null },
+                                            domain = null,
+                                            shareName = shareNames.firstOrNull()
+                                        )
                                     }
                                     isConnecting = false
                                     if (ok) {
@@ -262,11 +375,12 @@ fun SettingsScreen(
                                             PreferencesManager.SmbConnectionConfig(
                                                 serverAddress = serverAddress,
                                                 username = username,
-                                                password = password
+                                                password = password,
+                                                shareNames = shareNames
                                             )
                                         )
                                     } else {
-                                        connectError = "无法连接到服务器，请检查地址和凭据"
+                                        connectError = "无法连接到服务器，请检查地址、凭据或共享名"
                                     }
                                 }
                             },
@@ -291,6 +405,8 @@ fun SettingsScreen(
                                     serverAddress = ""
                                     username = ""
                                     password = ""
+                                    shareNames = emptyList()
+                                    newShareName = ""
                                     connectSuccess = false
                                     connectError = null
                                 }

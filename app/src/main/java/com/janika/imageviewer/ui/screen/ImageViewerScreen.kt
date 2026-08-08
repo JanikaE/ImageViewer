@@ -37,10 +37,14 @@ import com.janika.imageviewer.data.model.ImageItem
 import com.janika.imageviewer.util.MediaSaver
 import com.janika.imageviewer.util.SmbImageLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+/** 当前页之后额外预取的图片张数 */
+private const val PREFETCH_DISTANCE = 3
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,6 +82,30 @@ fun ImageViewerScreen(
         showControls = false
     }
 
+    // 预取后续图片到本地缓存，翻页时无需等待下载
+    val prefetchedPages = remember { mutableStateMapOf<Int, Boolean>() }
+    LaunchedEffect(currentPage) {
+        val end = minOf(currentPage + PREFETCH_DISTANCE, imageList.lastIndex)
+        for (i in (currentPage + 1)..end) {
+            if (prefetchedPages.containsKey(i)) continue
+            prefetchedPages[i] = true
+            val item = imageList[i]
+            if (item.isNetworkFile && item.smbServerAddress != null && item.smbShareName != null) {
+                // 用独立协程并在 NonCancellable 下执行，避免翻页取消导致下载中断留下半文件
+                scope.launch {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        SmbImageLoader.cacheSmbFile(
+                            context = context,
+                            serverAddress = item.smbServerAddress,
+                            shareName = item.smbShareName,
+                            filePath = item.path
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onBack,
         properties = DialogProperties(
@@ -95,7 +123,7 @@ fun ImageViewerScreen(
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
-                beyondViewportPageCount = 1,
+                beyondViewportPageCount = 2,
                 userScrollEnabled = currentScale <= 1.05f
             ) { page ->
                 val item = imageList[page]
@@ -131,12 +159,11 @@ fun ImageViewerScreen(
                                 val item = imageList[currentPage]
                                 val sourcePath: String? = if (item.isNetworkFile) {
                                     // 网络文件：先确保已缓存
-                                    if (item.smbUrl != null) {
+                                    if (item.smbServerAddress != null && item.smbShareName != null) {
                                         withContext(Dispatchers.IO) {
                                             SmbImageLoader.cacheSmbFile(
-                                                context, item.smbUrl,
-                                                item.smbUsername, item.smbPassword,
-                                                item.smbServerAddress, item.smbShareName
+                                                context, item.smbServerAddress,
+                                                item.smbShareName, item.path
                                             )
                                         }
                                     } else null
@@ -251,8 +278,8 @@ private fun ImagePage(
         }
     }
 
-    LaunchedEffect(item.smbUrl, item.smbUsername, item.smbPassword, item.smbServerAddress, item.smbShareName) {
-        if (item.isNetworkFile && item.smbUrl != null) {
+    LaunchedEffect(item.smbServerAddress, item.smbShareName, item.path) {
+        if (item.isNetworkFile && item.smbServerAddress != null && item.smbShareName != null) {
             isLoading = true
             errorMessage = null
             downloadProgress = 0L
@@ -260,11 +287,9 @@ private fun ImagePage(
             val cached = withContext(Dispatchers.IO) {
                 SmbImageLoader.cacheSmbFile(
                     context = context,
-                    smbUrl = item.smbUrl,
-                    username = item.smbUsername,
-                    password = item.smbPassword,
                     serverAddress = item.smbServerAddress,
                     shareName = item.smbShareName,
+                    filePath = item.path,
                     onProgress = { done, total ->
                         downloadProgress = done
                         downloadTotal = total

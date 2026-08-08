@@ -18,7 +18,6 @@ data class NetworkBrowserState(
     val currentFolderName: String = "网络共享",
     val files: List<ImageFile> = emptyList(),
     val shares: List<String> = emptyList(),
-    val servers: List<String> = emptyList(),
     val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val error: String? = null,
@@ -54,25 +53,22 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
             _state.value = _state.value.copy(isLoading = true, error = null)
             try {
                 // 冷启动时网络可能未就绪，重试最多 3 次
-                var shares: List<String> = emptyList()
+                var connected = false
                 var lastError: String? = null
                 for (attempt in 1..3) {
-                    val success = repository.connect(
+                    connected = repository.connect(
                         serverAddress = config.serverAddress,
-                        shareName = "",
                         username = config.username.ifEmpty { null },
                         password = config.password.ifEmpty { null }
                     )
-                    shares = repository.listShares(config.serverAddress)
-                    if (shares.isNotEmpty()) break
-                    lastError = if (!success) "无法连接到服务器，请检查设置中的地址和凭据"
-                        else "服务器上没有找到共享文件夹"
+                    if (connected) break
+                    lastError = "无法连接到服务器，请检查设置中的地址和凭据"
                     if (attempt < 3) kotlinx.coroutines.delay(1000L * attempt)
                 }
-                if (shares.isNotEmpty()) {
+                if (connected) {
                     _state.value = _state.value.copy(
                         serverAddress = config.serverAddress,
-                        shares = shares,
+                        shares = config.shareNames,
                         isLoading = false,
                         isConnected = true
                     )
@@ -116,23 +112,20 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                 // 先建立连接
                 val success = repository.connect(
                     serverAddress = config.configServerAddress,
-                    shareName = "", // 空共享名用于测试连接
                     username = config.configUsername.ifEmpty { null },
                     password = config.configPassword.ifEmpty { null }
                 )
 
-                // 无论连接测试是否成功，都尝试列出共享
-                val shares = repository.listShares(config.configServerAddress)
-
-                if (shares.isEmpty()) {
+                if (!success) {
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        error = if (!success) "无法连接到服务器，请检查地址和凭据" else "服务器上没有找到共享文件夹"
+                        error = "无法连接到服务器，请检查地址和凭据"
                     )
                 } else {
+                    val shareNames = preferences.loadShareNames()
                     _state.value = _state.value.copy(
                         serverAddress = config.configServerAddress,
-                        shares = shares,
+                        shares = shareNames,
                         isLoading = false,
                         isConnected = true
                     )
@@ -141,7 +134,8 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                         PreferencesManager.SmbConnectionConfig(
                             serverAddress = config.configServerAddress,
                             username = config.configUsername,
-                            password = config.configPassword
+                            password = config.configPassword,
+                            shareNames = shareNames
                         )
                     )
                 }
@@ -154,6 +148,13 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    /** 重新从配置加载共享名列表（设置页修改后返回时调用） */
+    fun refreshShares() {
+        if (_state.value.shareName.isEmpty()) {
+            _state.value = _state.value.copy(shares = preferences.loadShareNames())
+        }
+    }
+
     fun openShare(shareName: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
@@ -161,14 +162,20 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                 val config = _state.value
                 // 确保已连接
                 if (!repository.isConnected()) {
-                    repository.connect(
+                    val ok = repository.connect(
                         serverAddress = config.serverAddress,
-                        shareName = shareName,
                         username = config.configUsername.ifEmpty { null },
                         password = config.configPassword.ifEmpty { null }
                     )
+                    if (!ok) {
+                        _state.value = _state.value.copy(
+                            isLoading = false,
+                            error = "无法连接到服务器，请检查设置中的地址和凭据"
+                        )
+                        return@launch
+                    }
                 }
-                val files = repository.listFiles(config.serverAddress, shareName)
+                val files = repository.listFiles(shareName)
                 _state.value = _state.value.copy(
                     shareName = shareName,
                     currentPath = "",
@@ -190,7 +197,7 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
             _state.value = _state.value.copy(isLoading = true)
             try {
                 val config = _state.value
-                val files = repository.listFiles(config.serverAddress, config.shareName, folderPath)
+                val files = repository.listFiles(config.shareName, folderPath)
                 _state.value = _state.value.copy(
                     currentPath = folderPath,
                     currentFolderName = folderName,

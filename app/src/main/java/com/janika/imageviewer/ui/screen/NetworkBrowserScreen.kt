@@ -31,7 +31,7 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NetworkBrowserScreen(
-    onImageClick: (List<ImageFile>, Int, String, String, String?, String?) -> Unit,
+    onImageClick: (List<ImageFile>, Int, String, String) -> Unit,
     onNavigateToSettings: () -> Unit = {},
     onNavigateBack: () -> Unit = {},
     viewModel: NetworkBrowserViewModel = viewModel()
@@ -41,6 +41,9 @@ fun NetworkBrowserScreen(
     val prefs = remember { PreferencesManager(context) }
     val labelFontScale = prefs.loadLabelFontScale()
     val labelMaxLines = prefs.loadLabelMaxLines()
+
+    // 进入页面时刷新共享名列表（设置页可能已修改）
+    LaunchedEffect(Unit) { viewModel.refreshShares() }
 
     // 拦截系统返回键
     BackHandler(enabled = state.isConnected) {
@@ -124,7 +127,7 @@ fun NetworkBrowserScreen(
                 }
             }
             state.shareName.isEmpty() && state.shares.isNotEmpty() -> {
-                // 显示共享文件夹列表
+                // 显示已配置的共享文件夹列表
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 120.dp),
                     contentPadding = PaddingValues(8.dp),
@@ -183,6 +186,8 @@ fun NetworkBrowserScreen(
                         NetworkFileGridItem(
                             file = file,
                             cachePath = cachePath,
+                            serverAddress = state.serverAddress,
+                            shareName = state.shareName,
                             labelFontScale = labelFontScale,
                             labelMaxLines = labelMaxLines,
                             onFolderClick = {
@@ -196,13 +201,22 @@ fun NetworkBrowserScreen(
                                     imageFiles,
                                     idx.coerceAtLeast(0),
                                     state.serverAddress,
-                                    state.shareName,
-                                    state.configUsername.ifEmpty { null },
-                                    state.configPassword.ifEmpty { null }
+                                    state.shareName
                                 )
                             }
                         )
                     }
+                }
+            }
+            state.shareName.isEmpty() && state.shares.isEmpty() -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "尚未配置共享名，请到设置中添加",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             else -> {
@@ -224,6 +238,8 @@ fun NetworkBrowserScreen(
 private fun NetworkFileGridItem(
     file: ImageFile,
     cachePath: String?,
+    serverAddress: String,
+    shareName: String,
     labelFontScale: Float,
     labelMaxLines: Int,
     onFolderClick: () -> Unit,
@@ -257,7 +273,9 @@ private fun NetworkFileGridItem(
                 // 文件夹：有预览图则缓存并显示，否则显示图标
                 if (file.previewPath != null) {
                     NetworkFolderPreview(
-                        smbPreviewUrl = file.previewPath!!,
+                        serverAddress = serverAddress,
+                        shareName = shareName,
+                        previewPath = file.previewPath!!,
                         folderName = file.name,
                         labelFontScale = labelFontScale,
                         labelMaxLines = labelMaxLines
@@ -342,7 +360,9 @@ private fun NetworkFileGridItem(
  */
 @Composable
 private fun NetworkFolderPreview(
-    smbPreviewUrl: String,
+    serverAddress: String,
+    shareName: String,
+    previewPath: String,
     folderName: String,
     labelFontScale: Float,
     labelMaxLines: Int
@@ -350,9 +370,9 @@ private fun NetworkFolderPreview(
     val context = LocalContext.current
     var cachedPath by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(smbPreviewUrl) {
+    LaunchedEffect(serverAddress, shareName, previewPath) {
         cachedPath = withContext(Dispatchers.IO) {
-            SmbImageLoader.cacheSmbFile(context, smbPreviewUrl)
+            SmbImageLoader.cacheSmbFile(context, serverAddress, shareName, previewPath)
         }
     }
 

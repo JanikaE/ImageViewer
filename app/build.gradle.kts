@@ -52,8 +52,10 @@ dependencies {
     // Coil - 图片加载 (支持 PNG/JPG/WebP)
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // SMB/JCIFS - 局域网共享文件夹访问
-    implementation("eu.agno3.jcifs:jcifs-ng:2.1.9")
+    // SMB2/3 - 局域网共享文件夹访问（SMBJ）
+    implementation("com.hierynomus:smbj:0.14.0")
+    // SMBJ 依赖 SLF4J 2.x，Android 无默认绑定，用 NOP 抑制库内部日志
+    implementation("org.slf4j:slf4j-nop:2.0.9")
 
     // Navigation Compose
     implementation("androidx.navigation:navigation-compose:2.7.5")
