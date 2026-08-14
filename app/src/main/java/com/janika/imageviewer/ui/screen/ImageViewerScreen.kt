@@ -5,6 +5,7 @@ import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.ImageDecoder
 import android.os.Build
 import android.widget.ImageView
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -29,8 +30,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageItem
@@ -106,133 +105,127 @@ fun ImageViewerScreen(
         }
     }
 
-    Dialog(
-        onDismissRequest = onBack,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false
-        )
+    // 全屏覆盖层绘制（不用 Dialog 窗口，与主窗口共享系统栏 insets）
+    BackHandler { onBack() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-        ) {
-            // 图片翻页（放大时禁止滑动，让 transformable 处理手势）
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                beyondViewportPageCount = 2,
-                userScrollEnabled = currentScale <= 1.05f
-            ) { page ->
-                val item = imageList[page]
-                ImagePage(
-                    item = item,
-                    isCurrentPage = page == currentPage,
-                    parentScale = pageScales[page] ?: 1f,
-                    onScaleChange = { newScale -> pageScales[page] = newScale },
-                    onToggleControls = { showControls = !showControls },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            // 顶部工具栏
-            AnimatedVisibility(
-                visible = showControls,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter)
-            ) {
-                TopAppBar(
-                    title = {
-                        Text(text = currentItem.name, maxLines = 1)
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            scope.launch {
-                                val item = imageList[currentPage]
-                                val sourcePath: String? = if (item.isNetworkFile) {
-                                    // 网络文件：先确保已缓存
-                                    if (item.smbServerAddress != null && item.smbShareName != null) {
-                                        withContext(Dispatchers.IO) {
-                                            SmbImageLoader.cacheSmbFile(
-                                                context, item.smbServerAddress,
-                                                item.smbShareName, item.path
-                                            )
-                                        }
-                                    } else null
-                                } else item.path
-
-                                if (sourcePath != null) {
-                                    val ok = withContext(Dispatchers.IO) {
-                                        MediaSaver.saveToGallery(context, File(sourcePath), item.name)
-                                    }
-                                    snackbarHostState.showSnackbar(
-                                        if (ok) "已保存到相册" else "保存失败"
-                                    )
-                                } else {
-                                    snackbarHostState.showSnackbar("无法获取图片文件")
-                                }
-                            }
-                        }) {
-                            Icon(Icons.Default.SaveAlt, contentDescription = "保存到相册")
-                        }
-                        IconButton(onClick = {
-                            pageScales[currentPage] = (currentScale * 1.5f).coerceAtMost(5f)
-                        }) {
-                            Icon(Icons.Default.ZoomIn, contentDescription = "放大")
-                        }
-                        IconButton(onClick = {
-                            pageScales[currentPage] = (currentScale / 1.5f).coerceAtLeast(0.5f)
-                        }) {
-                            Icon(Icons.Default.ZoomOut, contentDescription = "缩小")
-                        }
-                        TextButton(onClick = {
-                            pageScales[currentPage] = 1f
-                        }) {
-                            Text("1:1")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f)
-                    )
-                )
-            }
-
-            // 底部页码与滚动条
-            AnimatedVisibility(
-                visible = showControls,
-                enter = fadeIn() + slideInVertically { it },
-                exit = fadeOut() + slideOutVertically { it },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 48.dp)
-            ) {
-                BottomPageBar(
-                    currentPage = currentPage,
-                    totalPages = imageList.size,
-                    swipeRightToLeft = swipeRightToLeft,
-                    onPageChange = { page ->
-                        scope.launch { pagerState.animateScrollToPage(page) }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-            }
-
-            // 保存反馈
-            SnackbarHost(
-                hostState = snackbarHostState,
-                modifier = Modifier.align(Alignment.BottomCenter)
+        // 图片翻页（放大时禁止滑动，让 transformable 处理手势）
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 2,
+            userScrollEnabled = currentScale <= 1.05f
+        ) { page ->
+            val item = imageList[page]
+            ImagePage(
+                item = item,
+                isCurrentPage = page == currentPage,
+                parentScale = pageScales[page] ?: 1f,
+                onScaleChange = { newScale -> pageScales[page] = newScale },
+                onToggleControls = { showControls = !showControls },
+                modifier = Modifier.fillMaxSize()
             )
         }
+
+        // 顶部工具栏
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            TopAppBar(
+                title = {
+                    Text(text = currentItem.name, maxLines = 1)
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            val item = imageList[currentPage]
+                            val sourcePath: String? = if (item.isNetworkFile) {
+                                // 网络文件：先确保已缓存
+                                if (item.smbServerAddress != null && item.smbShareName != null) {
+                                    withContext(Dispatchers.IO) {
+                                        SmbImageLoader.cacheSmbFile(
+                                            context, item.smbServerAddress,
+                                            item.smbShareName, item.path
+                                        )
+                                    }
+                                } else null
+                            } else item.path
+
+                            if (sourcePath != null) {
+                                val ok = withContext(Dispatchers.IO) {
+                                    MediaSaver.saveToGallery(context, File(sourcePath), item.name)
+                                }
+                                snackbarHostState.showSnackbar(
+                                    if (ok) "已保存到相册" else "保存失败"
+                                )
+                            } else {
+                                snackbarHostState.showSnackbar("无法获取图片文件")
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Default.SaveAlt, contentDescription = "保存到相册")
+                    }
+                    IconButton(onClick = {
+                        pageScales[currentPage] = (currentScale * 1.5f).coerceAtMost(5f)
+                    }) {
+                        Icon(Icons.Default.ZoomIn, contentDescription = "放大")
+                    }
+                    IconButton(onClick = {
+                        pageScales[currentPage] = (currentScale / 1.5f).coerceAtLeast(0.5f)
+                    }) {
+                        Icon(Icons.Default.ZoomOut, contentDescription = "缩小")
+                    }
+                    TextButton(onClick = {
+                        pageScales[currentPage] = 1f
+                    }) {
+                        Text("1:1")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f)
+                )
+            )
+        }
+
+        // 底部页码与滚动条
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp)
+        ) {
+            BottomPageBar(
+                currentPage = currentPage,
+                totalPages = imageList.size,
+                swipeRightToLeft = swipeRightToLeft,
+                onPageChange = { page ->
+                    scope.launch { pagerState.animateScrollToPage(page) }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+        }
+
+        // 保存反馈
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
 

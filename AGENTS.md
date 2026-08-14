@@ -18,6 +18,9 @@ UI strings, code comments, and git commits are in Chinese (app name "图片阅�
 ## Architecture
 - Entry: `MainActivity.kt`. NavHost routes: `"home"`, `"local"`, `"network"`, `"settings"`, `"cache"`.
 - The fullscreen viewer (`ImageViewerScreen`) is NOT a nav route. It is an overlay rendered at the top level of `ImageViewerApp` whenever `rawImageList` state is non-empty, with swipe order driven by the `swipe_right_to_left` preference (`MainActivity.kt:36-107`).
+- **图片查看器不用 Dialog 窗口**：它作为主窗口内的覆盖层渲染（`NavHost` 的最后一个子元素，绘制在最上层），返回键用 `BackHandler` 处理。原因：Android 16 上 Compose `Dialog` 窗口不报告系统栏 insets，`navigationBarsPadding` 无效；改用主窗口覆盖层后与文件夹浏览共用同一套 insets 逻辑。
+- **系统导航栏独立显示（不沉浸）**：`MainActivity` 不再调用 `enableEdgeToEdge()`。Android 16（API 36）强制边缘到边缘且 `android:windowOptOutEdgeToEdgeEnforcement` 已失效，因此用「内容内缩 + 背景填充」实现：`NavHost`（及图片查看器）外包一层 `Box`，`.background(colorScheme.background)` 铺满导航栏区域、`.navigationBarsPadding()` 让内容止步于导航栏上方。别把这两者改成直接 `fillMaxSize()` 裸布局，否则内容会再次延伸到导航栏后面。
+- 系统栏颜色在 `Theme.kt` 的 `ImageViewerTheme` 里用 `SideEffect` + `WindowCompat` 设置（`statusBarColor`/`navigationBarColor` = `colorScheme.background`，随浅色/深色主题切换，`isAppearanceLight{Status,Navigation}Bars` 同步）。
 - Local browser reads the filesystem directly with `java.io.File` on `/storage/emulated/0` (`LocalFileRepository`); folder previews are the first supported image found inside.
 - Manifest sets `usesCleartextTraffic="true"` (required for SMB) and declares storage/network permissions — the manifest is the source of truth for API-level permission splits (READ_MEDIA_IMAGES 33+, READ_EXTERNAL_STORAGE ≤32).
 

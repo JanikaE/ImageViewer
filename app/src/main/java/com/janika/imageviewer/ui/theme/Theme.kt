@@ -9,7 +9,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
@@ -48,6 +51,21 @@ fun ImageViewerTheme(
 
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
+    }
+
+    // 系统状态栏/导航栏颜色跟随应用主题（浅色/深色），保持与背景一致
+    val activity = LocalContext.current as? Activity
+    val barColor = colorScheme.background.toArgb()
+    val dark = darkTheme
+    SideEffect {
+        activity?.window?.let { window ->
+            window.statusBarColor = barColor
+            window.navigationBarColor = barColor
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
     }
 
     MaterialTheme(
