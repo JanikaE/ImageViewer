@@ -48,7 +48,7 @@ class LocalFileRepository {
                     !file.name.startsWith(".") // 隐藏隐藏文件夹
                 } else {
                     val ext = file.name.substringAfterLast('.', "").lowercase()
-                    ext in ImageFile.SUPPORTED_FORMATS
+                    ext in ImageFile.SUPPORTED_FORMATS || ext in ImageFile.SUPPORTED_VIDEO_FORMATS
                 }
             }
             ?.map { file ->

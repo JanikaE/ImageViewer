@@ -40,6 +40,9 @@ fun ImageViewerApp() {
     var rawImageList by remember { mutableStateOf<List<ImageItem>>(emptyList()) }
     var rawIndex by remember { mutableIntStateOf(0) }
 
+    // 视频播放器状态（单个视频）
+    var rawVideoItem by remember { mutableStateOf<ImageItem?>(null) }
+
     // 是否已保存网络配置
     val hasNetworkConfig = prefs.loadConfig() != null
 
@@ -74,6 +77,9 @@ fun ImageViewerApp() {
                     onImageClick = { files, index ->
                         rawImageList = ImageItem.fromLocalFiles(files)
                         rawIndex = index
+                    },
+                    onVideoClick = { file ->
+                        rawVideoItem = ImageItem.fromLocalVideo(file)
                     }
                 )
             }
@@ -85,6 +91,9 @@ fun ImageViewerApp() {
                             files, serverAddress, shareName
                         )
                         rawIndex = index
+                    },
+                    onVideoClick = { file, serverAddress, shareName ->
+                        rawVideoItem = ImageItem.fromNetworkVideo(file, serverAddress, shareName)
                     },
                     onNavigateToSettings = { navController.navigate("settings") },
                     onNavigateBack = { navController.popBackStack() }
@@ -113,6 +122,16 @@ fun ImageViewerApp() {
                 swipeRightToLeft = swipeRightToLeft,
                 onBack = {
                     rawImageList = emptyList()
+                }
+            )
+        }
+
+        // 视频播放器覆盖层
+        rawVideoItem?.let { videoItem ->
+            VideoPlayerScreen(
+                videoItem = videoItem,
+                onBack = {
+                    rawVideoItem = null
                 }
             )
         }

@@ -1,5 +1,6 @@
 package com.janika.imageviewer.ui.screen
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,6 +41,10 @@ fun SettingsScreen(
     var isConnecting by remember { mutableStateOf(false) }
     var connectError by remember { mutableStateOf<String?>(null) }
     var connectSuccess by remember { mutableStateOf(false) }
+
+    // ── 视频播放设置 ──
+    var videoPlayMode by remember { mutableStateOf(prefs.loadVideoPlayMode()) }
+    var keepScreenOn by remember { mutableStateOf(prefs.loadKeepScreenOn()) }
 
     Scaffold(
         topBar = {
@@ -203,6 +208,93 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // ── 视频 ──
+            Text(
+                text = "视频",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Card {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("播放方式", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                videoPlayMode = PreferencesManager.VIDEO_MODE_STREAM
+                                prefs.saveVideoPlayMode(PreferencesManager.VIDEO_MODE_STREAM)
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = videoPlayMode == PreferencesManager.VIDEO_MODE_STREAM,
+                            onClick = {
+                                videoPlayMode = PreferencesManager.VIDEO_MODE_STREAM
+                                prefs.saveVideoPlayMode(PreferencesManager.VIDEO_MODE_STREAM)
+                            }
+                        )
+                        Text("流式播放（边下边看，启动快）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                videoPlayMode = PreferencesManager.VIDEO_MODE_CACHE
+                                prefs.saveVideoPlayMode(PreferencesManager.VIDEO_MODE_CACHE)
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = videoPlayMode == PreferencesManager.VIDEO_MODE_CACHE,
+                            onClick = {
+                                videoPlayMode = PreferencesManager.VIDEO_MODE_CACHE
+                                prefs.saveVideoPlayMode(PreferencesManager.VIDEO_MODE_CACHE)
+                            }
+                        )
+                        Text("先缓存后播放（占用存储空间）", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text(
+                        text = "仅对局域网网络视频生效，本地视频始终直接播放",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("播放时保持屏幕常亮", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = "防止看视频时屏幕自动熄灭",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = keepScreenOn,
+                            onCheckedChange = { checked ->
+                                keepScreenOn = checked
+                                prefs.saveKeepScreenOn(checked)
+                            }
+                        )
+                    }
                 }
             }
 

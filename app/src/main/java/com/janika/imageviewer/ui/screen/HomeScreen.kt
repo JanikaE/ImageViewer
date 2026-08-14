@@ -72,13 +72,18 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "PNG · JPG · JPEG · WebP · GIF",
+                        text = "图片：PNG · JPG · JPEG · WebP · GIF",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "视频：MP4 · MKV · WEBM · MOV · AVI · TS · M2TS · FLV · WMV · 3GP · OGV",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "支持浏览本地存储和局域网 SMB 共享文件夹中的图片",
+                        text = "支持浏览本地存储和局域网 SMB 共享文件夹中的图片与视频",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )

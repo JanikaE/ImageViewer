@@ -1,7 +1,7 @@
 package com.janika.imageviewer.data.model
 
 /**
- * 图片查看器的图片项 - 支持本地文件和网络文件
+ * 查看器条目 - 支持本地/网络文件的图片和视频
  */
 data class ImageItem(
     /** 显示路径：本地文件为绝对路径，网络文件为相对路径 */
@@ -13,7 +13,9 @@ data class ImageItem(
     /** SMB 服务器地址（仅网络文件） */
     val smbServerAddress: String? = null,
     /** SMB 共享名（仅网络文件） */
-    val smbShareName: String? = null
+    val smbShareName: String? = null,
+    /** 是否为视频文件 */
+    val isVideo: Boolean = false
 ) {
     companion object {
         /** 从本地 ImageFile 列表构建 ImageItem 列表 */
@@ -42,6 +44,32 @@ data class ImageItem(
                     smbShareName = shareName
                 )
             }
+        }
+
+        /** 从本地视频文件构建单个 ImageItem */
+        fun fromLocalVideo(file: ImageFile): ImageItem {
+            return ImageItem(
+                path = file.path,
+                name = file.name,
+                isNetworkFile = false,
+                isVideo = true
+            )
+        }
+
+        /** 从网络视频文件构建单个 ImageItem */
+        fun fromNetworkVideo(
+            file: ImageFile,
+            serverAddress: String,
+            shareName: String
+        ): ImageItem {
+            return ImageItem(
+                path = file.path,
+                name = file.name,
+                isNetworkFile = true,
+                smbServerAddress = serverAddress,
+                smbShareName = shareName,
+                isVideo = true
+            )
         }
     }
 }

@@ -114,6 +114,26 @@ class PreferencesManager(context: Context) {
         settingsPrefs.edit().putInt(KEY_SEGMENT_CONCURRENCY, concurrency.coerceIn(1, 16)).apply()
     }
 
+    // ── 视频播放 ──
+
+    /** 视频播放方式：VIDEO_MODE_STREAM=流式，VIDEO_MODE_CACHE=先缓存后播放 */
+    fun loadVideoPlayMode(): String {
+        return settingsPrefs.getString(KEY_VIDEO_PLAY_MODE, VIDEO_MODE_STREAM) ?: VIDEO_MODE_STREAM
+    }
+
+    fun saveVideoPlayMode(mode: String) {
+        settingsPrefs.edit().putString(KEY_VIDEO_PLAY_MODE, mode).apply()
+    }
+
+    /** 播放时保持屏幕常亮，默认开启 */
+    fun loadKeepScreenOn(): Boolean {
+        return settingsPrefs.getBoolean(KEY_KEEP_SCREEN_ON, true)
+    }
+
+    fun saveKeepScreenOn(keepScreenOn: Boolean) {
+        settingsPrefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, keepScreenOn).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "smb_connection_prefs"
         private const val SETTINGS_PREFS_NAME = "app_settings"
@@ -125,5 +145,12 @@ class PreferencesManager(context: Context) {
         private const val KEY_LABEL_FONT_SCALE = "label_font_scale"
         private const val KEY_LABEL_MAX_LINES = "label_max_lines"
         private const val KEY_SEGMENT_CONCURRENCY = "segment_concurrency"
+        private const val KEY_VIDEO_PLAY_MODE = "video_play_mode"
+        private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+
+        /** 视频播放方式：流式 */
+        const val VIDEO_MODE_STREAM = "stream"
+        /** 视频播放方式：先缓存后播放 */
+        const val VIDEO_MODE_CACHE = "cache"
     }
 }

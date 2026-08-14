@@ -1,18 +1,22 @@
 package com.janika.imageviewer.ui.screen
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -23,12 +27,16 @@ import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.ui.viewmodel.LocalBrowserViewModel
+import com.janika.imageviewer.util.VideoThumbnailLoader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocalBrowserScreen(
     onImageClick: (List<ImageFile>, Int) -> Unit,
+    onVideoClick: (ImageFile) -> Unit = {},
     viewModel: LocalBrowserViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -108,9 +116,11 @@ fun LocalBrowserScreen(
                         onClick = {
                             if (file.isDirectory) {
                                 viewModel.navigateTo(file.path, file.name)
+                            } else if (file.isVideo) {
+                                onVideoClick(file)
                             } else {
                                 // 过滤出所有图片文件并传递索引
-                                val imageFiles = state.files.filter { !it.isDirectory }
+                                val imageFiles = state.files.filter { !it.isDirectory && it.isImage }
                                 val idx = imageFiles.indexOf(file)
                                 onImageClick(imageFiles, idx.coerceAtLeast(0))
                             }
@@ -225,6 +235,12 @@ private fun FileGridItem(
                         }
                     }
                 }
+            } else if (file.isVideo) {
+                LocalVideoGridItem(
+                    file = file,
+                    labelFontScale = labelFontScale,
+                    labelMaxLines = labelMaxLines
+                )
             } else {
                 // 图片缩略图
                 val request = remember(file.path) {
@@ -267,4 +283,102 @@ private fun FileGridItem(
             }
         }
     }
+}
+
+/**
+ * 本地视频网格项 - 提取首帧作缩略图，显示播放图标与时长角标。
+ */
+@Composable
+private fun LocalVideoGridItem(
+    file: ImageFile,
+    labelFontScale: Float,
+    labelMaxLines: Int
+) {
+    var frame by remember { mutableStateOf<VideoThumbnailLoader.VideoFrame?>(null) }
+    LaunchedEffect(file.path) {
+        frame = withContext(Dispatchers.IO) {
+            VideoThumbnailLoader.loadFrame(file.path)
+        }
+    }
+
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(
+        fontSize = MaterialTheme.typography.labelSmall.fontSize * labelFontScale
+    )
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (frame?.bitmap != null) {
+            Image(
+                bitmap = frame!!.bitmap!!.asImageBitmap(),
+                contentDescription = file.name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Icon(
+                Icons.Default.Movie,
+                contentDescription = file.name,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        }
+
+        // 中央播放图标
+        Surface(
+            color = Color.Black.copy(alpha = 0.45f),
+            shape = CircleShape
+        ) {
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "播放",
+                modifier = Modifier.padding(6.dp).size(28.dp),
+                tint = Color.White
+            )
+        }
+
+        // 底部：时长角标 + 文件名
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(4.dp)
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val durationMs = frame?.durationMs ?: 0L
+                if (durationMs > 0) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            text = formatVideoDuration(durationMs),
+                            style = labelStyle,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                Surface(
+                    color = Color.Black.copy(alpha = 0.55f),
+                    shape = MaterialTheme.shapes.extraSmall
+                ) {
+                    Text(
+                        text = file.name,
+                        style = labelStyle,
+                        maxLines = labelMaxLines,
+                        overflow = TextOverflow.Ellipsis,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatVideoDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

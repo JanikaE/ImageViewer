@@ -54,7 +54,9 @@ class SmbRepository {
                     )
                 } else {
                     val ext = rawName.substringAfterLast('.', "").lowercase()
-                    if (ext !in ImageFile.SUPPORTED_FORMATS) return@mapNotNull null
+                    if (ext !in ImageFile.SUPPORTED_FORMATS && ext !in ImageFile.SUPPORTED_VIDEO_FORMATS) {
+                        return@mapNotNull null
+                    }
                     ImageFile(
                         name = rawName,
                         path = if (folderPath.isEmpty()) rawName else "$folderPath/$rawName",

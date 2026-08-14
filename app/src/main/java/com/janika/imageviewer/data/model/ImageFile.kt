@@ -18,10 +18,18 @@ data class ImageFile(
     val isImage: Boolean
         get() = !isDirectory && extension in SUPPORTED_FORMATS
 
+    /** 是否为受支持的视频文件 */
+    val isVideo: Boolean
+        get() = !isDirectory && extension in SUPPORTED_VIDEO_FORMATS
+
     val isSupportedFormat: Boolean
-        get() = isDirectory || extension in SUPPORTED_FORMATS
+        get() = isDirectory || extension in SUPPORTED_FORMATS || extension in SUPPORTED_VIDEO_FORMATS
 
     companion object {
         val SUPPORTED_FORMATS = setOf("png", "jpg", "jpeg", "webp", "gif")
+        val SUPPORTED_VIDEO_FORMATS = setOf(
+            "mp4", "mkv", "m4v", "webm", "3gp", "avi",
+            "mov", "ts", "m2ts", "flv", "wmv", "ogv"
+        )
     }
 }

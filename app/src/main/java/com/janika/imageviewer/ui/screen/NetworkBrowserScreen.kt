@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +34,7 @@ import java.io.File
 @Composable
 fun NetworkBrowserScreen(
     onImageClick: (List<ImageFile>, Int, String, String) -> Unit,
+    onVideoClick: (ImageFile, String, String) -> Unit = { _, _, _ -> },
     onNavigateToSettings: () -> Unit = {},
     onNavigateBack: () -> Unit = {},
     viewModel: NetworkBrowserViewModel = viewModel()
@@ -193,9 +196,12 @@ fun NetworkBrowserScreen(
                             onFolderClick = {
                                 viewModel.navigateToFolder(file.path, file.name)
                             },
+                            onVideoClick = {
+                                onVideoClick(file, state.serverAddress, state.shareName)
+                            },
                             onImageClick = {
                                 // 过滤出所有图片文件并传递索引
-                                val imageFiles = state.files.filter { !it.isDirectory }
+                                val imageFiles = state.files.filter { !it.isDirectory && it.isImage }
                                 val idx = imageFiles.indexOf(file)
                                 onImageClick(
                                     imageFiles,
@@ -243,6 +249,7 @@ private fun NetworkFileGridItem(
     labelFontScale: Float,
     labelMaxLines: Int,
     onFolderClick: () -> Unit,
+    onVideoClick: () -> Unit,
     onImageClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -259,7 +266,11 @@ private fun NetworkFileGridItem(
             .fillMaxWidth()
             .aspectRatio(1f)
             .clickable(
-                onClick = if (file.isDirectory) onFolderClick else onImageClick
+                onClick = when {
+                    file.isDirectory -> onFolderClick
+                    file.isVideo -> onVideoClick
+                    else -> onImageClick
+                }
             ),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -307,6 +318,45 @@ private fun NetworkFileGridItem(
                                 style = nameStyle
                             )
                         }
+                    }
+                }
+            } else if (file.isVideo) {
+                // 网络视频：不下载缩略图，显示视频图标 + 播放图标 + 文件名
+                Icon(
+                    Icons.Default.Movie,
+                    contentDescription = file.name,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
+                Surface(
+                    color = Color.Black.copy(alpha = 0.45f),
+                    shape = CircleShape
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "播放",
+                        modifier = Modifier.padding(6.dp).size(28.dp),
+                        tint = Color.White
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(4.dp)
+                ) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = MaterialTheme.shapes.extraSmall
+                    ) {
+                        Text(
+                            text = file.name,
+                            style = labelStyle,
+                            maxLines = labelMaxLines,
+                            overflow = TextOverflow.Ellipsis,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
                     }
                 }
             } else {

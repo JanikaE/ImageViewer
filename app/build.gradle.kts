@@ -52,6 +52,11 @@ dependencies {
     // Coil - 图片加载 (支持 PNG/JPG/WebP)
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // Media3 ExoPlayer - 视频播放（硬件解码）
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    // Media3 UI - PlayerView 自带播放控件与手势
+    implementation("androidx.media3:media3-ui:1.5.1")
+
     // SMB2/3 - 局域网共享文件夹访问（SMBJ）
     implementation("com.hierynomus:smbj:0.14.0")
     // SMBJ 依赖 SLF4J 2.x，Android 无默认绑定，用 NOP 抑制库内部日志

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Android image viewer (Compose, single `:app` module) that browses local storage and SMB/network shares. Package/namespace: `com.janika.imageviewer`.
+Android image/video viewer (Compose, single `:app` module) that browses local storage and SMB/network shares. Package/namespace: `com.janika.imageviewer`.
 
 ## Language convention
 UI strings, code comments, and git commits are in Chinese (app name "图片阅读器"). Keep new strings/comments/commits in Chinese for consistency.
@@ -33,6 +33,19 @@ UI strings, code comments, and git commits are in Chinese (app name "图片阅�
 - SMB 图片下载到 `context.cacheDir/smb_cache/{server_share}/{pathHash}_{filename}`，先写 `.tmp` 再原子重命名，失败删除半成品；缓存管理 UI 读取该布局。
 - 不要再看 jcifs-ng（`eu.agno3.jcifs`）；`transaction_buf_size` 调大导致 `STATUS_INVALID_PARAMETER` 的历史问题已随库更换消除。
 - 大图下载用**并发分段读**：文件 > 512KB 时按设置项 `segment_concurrency`（`PreferencesManager`，默认 5，范围 1..16，设置页"下载"区块）切成 N 段并发 `File.read`，用 `FileChannel` 按偏移写本地 `.tmp`；小图走顺序读。分段下载完成会 `Log.i` 打印实测 MB/s。
+
+## Video playback (Media3 ExoPlayer — hard-won quirks, don't "fix")
+- 浏览层同时识别图片与视频（`ImageFile.SUPPORTED_VIDEO_FORMATS`：mp4/mkv/m4v/webm/3gp/avi/mov/ts/m2ts/flv/wmv/ogv）。图片走原 `HorizontalPager` 查看器，视频走独立 `VideoPlayerScreen` 覆盖层。注意图片翻页列表必须 `filter { it.isImage }`，别把视频混进图片 pager。
+- 播放内核是 **Media3 ExoPlayer 1.5.1**（`androidx.media3:media3-exoplayer` + `media3-ui`），控件用 `PlayerView` 自带控制条（AndroidView 包裹）。无需新增权限。
+- **视频播放器不用 Dialog**：与图片查看器一致，是 `MainActivity` 顶层的覆盖层（`rawVideoItem` 状态驱动），共享主窗口 insets。别改成 Dialog 窗口（Android 16 insets 失效问题）。
+- **方向策略**：进入锁定竖屏（`requestedOrientation = PORTRAIT`），仅全屏按钮切换横竖屏（`toggleFullscreen` 里 `LANDSCAPE`/`PORTRAIT` + 沉浸式），全程禁用重力感应（不用 `SENSOR`/`USER`）。返回键在全屏时先退全屏。
+- **Manifest 必须声明 `android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"`**：`requestedOrientation` 切换会触发配置变更，若不声明 `configChanges`，Activity 会被重建，`MainActivity` 里的 `rawImageList`/`rawVideoItem`（普通 `remember` 状态）被清空，导致视频播放器在全屏瞬间消失、露出文件夹界面。声明后旋转只重排不重建，播放连续、状态保留。别试图改成 `rememberSaveable`——那样播放器会被重建、视频会从头播。
+- **media3-ui 没有 GesturePlayerView**：它只存在于 ExoPlayer Demo 示例代码里，库的任何版本（查到 1.11.0）都没有这个类。本应用**未启用自定义手势**（快进快退/音量/亮度/双击等已按需求移除），PlayerView 自带单击显示控件 + 超时隐藏；顶部控制栏用 `setControllerVisibilityListener` 与自带控件同步显隐。若将来要加手势，参照 Demo 的 GestureManager：用 `PlayerView.setOnTouchListener` 接管画面区域触摸（会替换 PlayerView 内部 TouchListener，需自行处理显示控件）。
+- **网络视频播放方式**：设置页「视频」区块可选，默认**流式播放**——`SmbVideoDataSource` 基于 SMBJ `File.read(buffer, offset)` 随机读实现 Media3 `DataSource`，seek 靠 Media3 重新 `open(dataSpec.position)` 设起始偏移；会话由 `SmbSessionManager` 保持。另可选**先缓存后播放**：复用 `SmbImageLoader.cacheSmbFile` 整文件下载（带进度）到本地后播放。
+- **缓冲显示网速**：`VideoSpeedMonitor`（AtomicLong 累计字节 + 平均速度）由流式 `DataSource` 的每次 `read` 和缓存下载的进度回调共同上报，`VideoPlayerScreen` 在 `STATE_BUFFERING` 期间每秒刷新显示"缓冲中 X MB/s"。
+- 视频缓存同样落 `cacheDir/smb_cache/{server_share}/{pathHash}_{filename}`，自动被缓存管理页统计（缓存清理前播放器已释放句柄）。
+- 本地视频网格缩略图用 `MediaMetadataRetriever` 提取首帧（`VideoThumbnailLoader`，含时长角标）；网络视频网格只显示图标，不下载文件头做缩略图。
+- `VideoPlayerScreen` 的 `player` 用 `remember` 创建、DisposableEffect 释放；错误时重试按钮自增 `retryKey` 重新 `buildMediaSource` + `setMediaSource`。
 
 ## Testing
 - Only Gradle-template boilerplate exists (`ExampleUnitTest`, `ExampleInstrumentedTest`). No meaningful test suite or custom lint/typecheck config. Any SMB verification requires a real LAN share; the rest can be reasoned about statically.
