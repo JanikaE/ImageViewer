@@ -15,24 +15,12 @@ class LocalFileRepository {
 
         // 外部存储根目录
         File("/storage/emulated/0").takeIf { it.exists() }?.let { root ->
-            list.add(ImageFile(
-                name = "内部存储",
-                path = root.absolutePath,
-                size = 0,
-                lastModified = root.lastModified(),
-                isDirectory = true
-            ))
+            list.add(createDirectoryItem(root, "内部存储", includePreview = false))
         }
 
         // 可移除存储（SD卡等）
         File("/storage").listFiles()?.filter { it.isDirectory && it.name != "emulated" && it.name != "self" }?.forEach { dir ->
-            list.add(ImageFile(
-                name = dir.name,
-                path = dir.absolutePath,
-                size = 0,
-                lastModified = dir.lastModified(),
-                isDirectory = true
-            ))
+            list.add(createDirectoryItem(dir, dir.name, includePreview = false))
         }
 
         list
@@ -52,15 +40,17 @@ class LocalFileRepository {
                 }
             }
             ?.map { file ->
-                val preview = if (file.isDirectory) findFirstImage(file) else null
-                ImageFile(
-                    name = file.name,
-                    path = file.absolutePath,
-                    size = file.length(),
-                    lastModified = file.lastModified(),
-                    isDirectory = file.isDirectory,
-                    previewPath = preview
-                )
+                if (file.isDirectory) {
+                    createDirectoryItem(file, file.name)
+                } else {
+                    ImageFile(
+                        name = file.name,
+                        path = file.absolutePath,
+                        size = file.length(),
+                        lastModified = file.lastModified(),
+                        isDirectory = false
+                    )
+                }
             }
             ?.sortedWith(compareByDescending<ImageFile> { it.isDirectory }.thenBy { it.name.lowercase() })
             ?: emptyList()
@@ -76,13 +66,39 @@ class LocalFileRepository {
 
     fun getFileForPath(path: String): File = File(path)
 
-    /** 在文件夹中查找第一张支持的图片 */
-    private fun findFirstImage(dir: File): String? {
-        return dir.listFiles()
-            ?.sortedBy { it.name.lowercase() }
-            ?.firstOrNull { file ->
-                !file.isDirectory && file.name.substringAfterLast('.', "").lowercase() in ImageFile.SUPPORTED_FORMATS
+    /** 创建文件夹条目，同时统计直属内容并查找第一张预览图。 */
+    private fun createDirectoryItem(
+        dir: File,
+        displayName: String,
+        includePreview: Boolean = true
+    ): ImageFile {
+        val children = dir.listFiles()
+        val visibleDirectories = children?.filter { it.isDirectory && !it.name.startsWith(".") }
+        val supportedFiles = children?.filter { file ->
+            !file.isDirectory && file.name.substringAfterLast('.', "").lowercase().let { extension ->
+                extension in ImageFile.SUPPORTED_FORMATS || extension in ImageFile.SUPPORTED_VIDEO_FORMATS
             }
-            ?.absolutePath
+        }
+        val previewPath = if (includePreview) {
+            supportedFiles
+                ?.asSequence()
+                ?.filter { it.name.substringAfterLast('.', "").lowercase() in ImageFile.SUPPORTED_FORMATS }
+                ?.sortedBy { it.name.lowercase() }
+                ?.firstOrNull()
+                ?.absolutePath
+        } else {
+            null
+        }
+
+        return ImageFile(
+            name = displayName,
+            path = dir.absolutePath,
+            size = 0,
+            lastModified = dir.lastModified(),
+            isDirectory = true,
+            previewPath = previewPath,
+            childFileCount = supportedFiles?.size,
+            childDirectoryCount = visibleDirectories?.size
+        )
     }
 }

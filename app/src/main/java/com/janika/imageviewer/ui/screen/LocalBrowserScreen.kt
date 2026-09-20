@@ -26,6 +26,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.data.local.PreferencesManager
+import com.janika.imageviewer.ui.component.FolderContentCount
 import com.janika.imageviewer.ui.viewmodel.LocalBrowserViewModel
 import com.janika.imageviewer.util.VideoThumbnailLoader
 import kotlinx.coroutines.Dispatchers
@@ -175,6 +176,13 @@ private fun FileGridItem(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
+                    FolderContentCount(
+                        fileCount = file.childFileCount,
+                        directoryCount = file.childDirectoryCount,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(4.dp)
+                    )
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -211,6 +219,11 @@ private fun FileGridItem(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(8.dp)
                     ) {
+                        FolderContentCount(
+                            fileCount = file.childFileCount,
+                            directoryCount = file.childDirectoryCount
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Icon(
                             Icons.Default.Folder,
                             contentDescription = null,

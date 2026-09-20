@@ -18,6 +18,12 @@ import kotlinx.coroutines.withContext
  */
 class SmbRepository {
 
+    private data class FolderDetails(
+        val previewPath: String?,
+        val fileCount: Int,
+        val directoryCount: Int
+    )
+
     fun isConnected(): Boolean = SmbSessionManager.isConnected()
 
     suspend fun connect(
@@ -67,23 +73,48 @@ class SmbRepository {
                 }
             }
 
-            // 为文件夹并发获取第一张图片作为预览
+            // 为文件夹并发获取第一张图片和直属内容数量
             val dirs = items.filter { it.isDirectory }
             if (dirs.isNotEmpty()) {
-                val previewMap = coroutineScope {
+                val detailsMap = coroutineScope {
                     dirs.map { dir ->
                         async {
                             try {
                                 val subDir = share.list(dir.path)
-                                val firstName = subDir?.firstOrNull { f ->
-                                    !EnumWithValue.EnumUtils.isSet(
-                                        f.fileAttributes,
+                                val visibleItems = subDir.orEmpty().filter { item ->
+                                    val name = item.fileName.trimEnd('/')
+                                    name.isNotEmpty() && name != "." && name != ".."
+                                }
+                                val directoryCount = visibleItems.count { item ->
+                                    EnumWithValue.EnumUtils.isSet(
+                                        item.fileAttributes,
                                         FileAttributes.FILE_ATTRIBUTE_DIRECTORY
-                                    ) && f.fileName.substringAfterLast('.', "").lowercase() in ImageFile.SUPPORTED_FORMATS
-                                }?.fileName?.trimEnd('/')
-                                if (firstName != null) {
-                                    dir.path to "${dir.path}/$firstName"
-                                } else null
+                                    ) && !item.fileName.trimEnd('/').startsWith(".")
+                                }
+                                val supportedFiles = visibleItems.filter { item ->
+                                    !EnumWithValue.EnumUtils.isSet(
+                                        item.fileAttributes,
+                                        FileAttributes.FILE_ATTRIBUTE_DIRECTORY
+                                    ) && item.fileName.substringAfterLast('.', "").lowercase().let { extension ->
+                                        extension in ImageFile.SUPPORTED_FORMATS ||
+                                            extension in ImageFile.SUPPORTED_VIDEO_FORMATS
+                                    }
+                                }
+                                val firstImageName = supportedFiles
+                                    .asSequence()
+                                    .filter { item ->
+                                        item.fileName.substringAfterLast('.', "").lowercase() in
+                                            ImageFile.SUPPORTED_FORMATS
+                                    }
+                                    .sortedBy { it.fileName.lowercase() }
+                                    .firstOrNull()
+                                    ?.fileName
+                                    ?.trimEnd('/')
+                                dir.path to FolderDetails(
+                                    previewPath = firstImageName?.let { "${dir.path}/$it" },
+                                    fileCount = supportedFiles.size,
+                                    directoryCount = directoryCount
+                                )
                             } catch (_: Exception) {
                                 null
                             }
@@ -91,11 +122,15 @@ class SmbRepository {
                     }.awaitAll().filterNotNull().toMap()
                 }
 
-                if (previewMap.isNotEmpty()) {
+                if (detailsMap.isNotEmpty()) {
                     return@withContext items.map { item ->
                         if (item.isDirectory) {
-                            previewMap[item.path]?.let { previewPath ->
-                                item.copy(previewPath = previewPath)
+                            detailsMap[item.path]?.let { details ->
+                                item.copy(
+                                    previewPath = details.previewPath,
+                                    childFileCount = details.fileCount,
+                                    childDirectoryCount = details.directoryCount
+                                )
                             } ?: item
                         } else item
                     }.sortedWith(compareByDescending<ImageFile> { it.isDirectory }

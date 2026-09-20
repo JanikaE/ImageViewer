@@ -9,8 +9,12 @@ data class ImageFile(
     val size: Long,
     val lastModified: Long,
     val isDirectory: Boolean,
-    /** 文件夹的第一张图片预览路径（仅本地文件夹，网络文件夹为 null） */
-    val previewPath: String? = null
+    /** 文件夹直属层级中的第一张图片预览路径 */
+    val previewPath: String? = null,
+    /** 文件夹直属层级中可浏览的文件数量；非文件夹或无法读取时为 null */
+    val childFileCount: Int? = null,
+    /** 文件夹直属层级中非隐藏文件夹的数量；非文件夹或无法读取时为 null */
+    val childDirectoryCount: Int? = null
 ) {
     val extension: String
         get() = if (isDirectory) "" else name.substringAfterLast('.', "").lowercase()

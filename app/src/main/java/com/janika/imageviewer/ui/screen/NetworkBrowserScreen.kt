@@ -24,6 +24,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.data.local.PreferencesManager
+import com.janika.imageviewer.ui.component.FolderContentCount
 import com.janika.imageviewer.ui.viewmodel.NetworkBrowserViewModel
 import com.janika.imageviewer.util.SmbImageLoader
 import kotlinx.coroutines.Dispatchers
@@ -288,6 +289,8 @@ private fun NetworkFileGridItem(
                         shareName = shareName,
                         previewPath = file.previewPath!!,
                         folderName = file.name,
+                        childFileCount = file.childFileCount,
+                        childDirectoryCount = file.childDirectoryCount,
                         labelFontScale = labelFontScale,
                         labelMaxLines = labelMaxLines
                     )
@@ -296,6 +299,11 @@ private fun NetworkFileGridItem(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(8.dp)
                     ) {
+                        FolderContentCount(
+                            fileCount = file.childFileCount,
+                            directoryCount = file.childDirectoryCount
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Icon(
                             Icons.Default.Folder,
                             contentDescription = null,
@@ -414,6 +422,8 @@ private fun NetworkFolderPreview(
     shareName: String,
     previewPath: String,
     folderName: String,
+    childFileCount: Int?,
+    childDirectoryCount: Int?,
     labelFontScale: Float,
     labelMaxLines: Int
 ) {
@@ -450,6 +460,13 @@ private fun NetworkFolderPreview(
                 tint = MaterialTheme.colorScheme.primary
             )
         }
+        FolderContentCount(
+            fileCount = childFileCount,
+            directoryCount = childDirectoryCount,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(4.dp)
+        )
         // 文件夹名标签
         Box(
             modifier = Modifier
