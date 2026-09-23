@@ -14,7 +14,11 @@ data class ImageFile(
     /** 文件夹直属层级中可浏览的文件数量；非文件夹或无法读取时为 null */
     val childFileCount: Int? = null,
     /** 文件夹直属层级中非隐藏文件夹的数量；非文件夹或无法读取时为 null */
-    val childDirectoryCount: Int? = null
+    val childDirectoryCount: Int? = null,
+    /** 文件夹直属层级中已缓存的媒体文件数量；非文件夹时为 null */
+    val cachedChildFileCount: Int? = null,
+    /** 已缓存文件的本地绝对路径；未缓存时为 null */
+    val localCachePath: String? = null
 ) {
     val extension: String
         get() = if (isDirectory) "" else name.substringAfterLast('.', "").lowercase()

@@ -8,7 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 /**
  * SMB 网络共享仓库 - 浏览局域网共享文件夹中的图片（基于 SMBJ）
@@ -142,8 +144,53 @@ class SmbRepository {
                 .thenBy { it.name.lowercase() })
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            e.printStackTrace()
-            emptyList()
+            throw e
         }
+    }
+
+    /**
+     * 递归枚举文件夹中的全部受支持媒体文件。隐藏文件夹和不支持的文件会被忽略。
+     */
+    suspend fun listMediaFilesRecursively(
+        shareName: String,
+        folderPath: String,
+        onScanningDirectory: (String) -> Unit = {}
+    ): List<ImageFile> = withContext(Dispatchers.IO) {
+        val share = SmbSessionManager.getDiskShare(shareName)
+        val result = mutableListOf<ImageFile>()
+
+        suspend fun scan(path: String) {
+            coroutineContext.ensureActive()
+            onScanningDirectory(path)
+            share.list(path).orEmpty().forEach { info ->
+                coroutineContext.ensureActive()
+                val name = info.fileName.trimEnd('/')
+                if (name.isEmpty() || name == "." || name == "..") return@forEach
+                val isDirectory = EnumWithValue.EnumUtils.isSet(
+                    info.fileAttributes,
+                    FileAttributes.FILE_ATTRIBUTE_DIRECTORY
+                )
+                val itemPath = if (path.isEmpty()) name else "$path/$name"
+                if (isDirectory) {
+                    if (!name.startsWith(".")) scan(itemPath)
+                } else {
+                    val extension = name.substringAfterLast('.', "").lowercase()
+                    if (extension in ImageFile.SUPPORTED_FORMATS ||
+                        extension in ImageFile.SUPPORTED_VIDEO_FORMATS
+                    ) {
+                        result += ImageFile(
+                            name = name,
+                            path = itemPath,
+                            size = info.endOfFile,
+                            lastModified = info.lastWriteTime?.toEpochMillis() ?: 0L,
+                            isDirectory = false
+                        )
+                    }
+                }
+            }
+        }
+
+        scan(folderPath)
+        result
     }
 }

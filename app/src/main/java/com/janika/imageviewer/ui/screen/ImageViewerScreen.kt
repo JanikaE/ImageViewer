@@ -89,7 +89,9 @@ fun ImageViewerScreen(
             if (prefetchedPages.containsKey(i)) continue
             prefetchedPages[i] = true
             val item = imageList[i]
-            if (item.isNetworkFile && item.smbServerAddress != null && item.smbShareName != null) {
+            if (item.isNetworkFile && item.localCachePath == null &&
+                item.smbServerAddress != null && item.smbShareName != null
+            ) {
                 // 用独立协程并在 NonCancellable 下执行，避免翻页取消导致下载中断留下半文件
                 scope.launch {
                     withContext(NonCancellable + Dispatchers.IO) {
@@ -152,15 +154,17 @@ fun ImageViewerScreen(
                         scope.launch {
                             val item = imageList[currentPage]
                             val sourcePath: String? = if (item.isNetworkFile) {
-                                // 网络文件：先确保已缓存
-                                if (item.smbServerAddress != null && item.smbShareName != null) {
-                                    withContext(Dispatchers.IO) {
-                                        SmbImageLoader.cacheSmbFile(
-                                            context, item.smbServerAddress,
-                                            item.smbShareName, item.path
-                                        )
-                                    }
-                                } else null
+                                item.localCachePath ?: run {
+                                    // 网络文件：先确保已缓存
+                                    if (item.smbServerAddress != null && item.smbShareName != null) {
+                                        withContext(Dispatchers.IO) {
+                                            SmbImageLoader.cacheSmbFile(
+                                                context, item.smbServerAddress,
+                                                item.smbShareName, item.path
+                                            )
+                                        }
+                                    } else null
+                                }
                             } else item.path
 
                             if (sourcePath != null) {
@@ -246,8 +250,10 @@ private fun ImagePage(
     val context = LocalContext.current
 
     // 网络文件：下载到本地缓存
-    var localPath by remember { mutableStateOf(if (item.isNetworkFile) null else item.path) }
-    var isLoading by remember { mutableStateOf(item.isNetworkFile) }
+    var localPath by remember {
+        mutableStateOf(item.localCachePath ?: if (item.isNetworkFile) null else item.path)
+    }
+    var isLoading by remember { mutableStateOf(item.isNetworkFile && item.localCachePath == null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var downloadProgress by remember { mutableLongStateOf(0L) }
     var downloadTotal by remember { mutableLongStateOf(0L) }
@@ -272,7 +278,9 @@ private fun ImagePage(
     }
 
     LaunchedEffect(item.smbServerAddress, item.smbShareName, item.path) {
-        if (item.isNetworkFile && item.smbServerAddress != null && item.smbShareName != null) {
+        if (item.isNetworkFile && item.localCachePath == null &&
+            item.smbServerAddress != null && item.smbShareName != null
+        ) {
             isLoading = true
             errorMessage = null
             downloadProgress = 0L

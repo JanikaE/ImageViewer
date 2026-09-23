@@ -378,7 +378,10 @@ private suspend fun buildMediaSource(
     val dataSourceFactory: DataSource.Factory
     val uri: Uri
 
-    if (videoItem.isNetworkFile && videoItem.smbServerAddress != null && videoItem.smbShareName != null) {
+    if (videoItem.localCachePath != null) {
+        dataSourceFactory = DefaultDataSource.Factory(context)
+        uri = Uri.fromFile(File(videoItem.localCachePath))
+    } else if (videoItem.isNetworkFile && videoItem.smbServerAddress != null && videoItem.smbShareName != null) {
         val server = videoItem.smbServerAddress
         val share = videoItem.smbShareName
         val path = videoItem.path

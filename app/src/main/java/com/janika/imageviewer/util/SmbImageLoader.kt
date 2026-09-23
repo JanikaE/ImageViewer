@@ -76,9 +76,13 @@ object SmbImageLoader {
         // 进程内只执行一次
         if (!migrationDone.compareAndSet(false, true)) return
         val root = File(context.cacheDir, CACHE_DIR)
-        if (!root.exists()) return
         synchronized(migrationLock) {
             val prefs = context.getSharedPreferences("smb_cache_migration", Context.MODE_PRIVATE)
+            // 全新安装没有旧缓存需要迁移，直接记为完成，避免下次启动误删首批新缓存。
+            if (!root.exists()) {
+                prefs.edit().putBoolean("cleared_partial_v3", true).apply()
+                return
+            }
             if (!prefs.getBoolean("cleared_partial_v3", false)) {
                 // 老版本可能留下读一半的半成品文件，升级后整体清空一次
                 root.listFiles()?.forEach { it.deleteRecursively() }
@@ -101,7 +105,9 @@ object SmbImageLoader {
         serverAddress: String,
         shareName: String,
         filePath: String,
-        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
+        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null,
+        expectedSize: Long = 0L,
+        lastModified: Long = 0L
     ): String? = withContext(Dispatchers.IO) {
         try {
             migrateOldCache(context)
@@ -114,6 +120,9 @@ object SmbImageLoader {
 
             // 如果已缓存，直接返回
             if (cacheFile.exists()) {
+                SmbCacheCatalog.record(
+                    cacheFile, serverAddress, shareName, filePath, expectedSize, lastModified
+                )
                 cacheFile.absolutePath
             } else {
                 // 同一文件路径串行下载（去重），并受全局并发上限约束
@@ -121,6 +130,9 @@ object SmbImageLoader {
                 downloadLocks.computeIfAbsent(lockKey) { Mutex() }.withLock {
                     // 等待锁期间可能已被其他协程下载完成
                     if (cacheFile.exists()) {
+                        SmbCacheCatalog.record(
+                            cacheFile, serverAddress, shareName, filePath, expectedSize, lastModified
+                        )
                         cacheFile.absolutePath
                     } else {
                         downloadSemaphore.withPermit {
@@ -129,6 +141,11 @@ object SmbImageLoader {
                             if (result == null) {
                                 // 下载失败时删除半成品文件，避免下次被误判为已缓存
                                 cacheFile.delete()
+                            } else {
+                                SmbCacheCatalog.record(
+                                    cacheFile, serverAddress, shareName, filePath,
+                                    expectedSize, lastModified
+                                )
                             }
                             result
                         }
@@ -221,6 +238,9 @@ object SmbImageLoader {
                 if (onProgress != null) {
                     onProgress(downloaded, total)
                 }
+            }
+            if (downloaded < total) {
+                throw java.io.IOException("下载不完整: $downloaded/$total")
             }
             if (!tmpFile.renameTo(cacheFile)) {
                 tmpFile.delete()
@@ -322,7 +342,10 @@ object SmbImageLoader {
         val fileName = filePath.substringAfterLast('/').ifEmpty { filePath }
         val cacheKey = filePath.hashCode().toString(16)
         val cacheFile = File(shareDir, "${cacheKey}_${fileName}")
-        return if (cacheFile.exists()) cacheFile.absolutePath else null
+        return if (cacheFile.exists()) {
+            SmbCacheCatalog.record(cacheFile, serverAddress, shareName, filePath)
+            cacheFile.absolutePath
+        } else null
     }
 
     /**
@@ -332,13 +355,17 @@ object SmbImageLoader {
         val cacheDir = File(context.cacheDir, CACHE_DIR)
         if (cacheDir.exists()) {
             cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+            SmbCacheCatalog.notifyCacheCleared()
         }
     }
 
     /** 清除指定共享文件夹的缓存 */
     fun clearShareCache(context: Context, serverAddress: String, shareName: String) {
         val shareDir = File(File(context.cacheDir, CACHE_DIR), cacheFolderName(serverAddress, shareName))
-        if (shareDir.exists()) shareDir.deleteRecursively()
+        if (shareDir.exists()) {
+            shareDir.deleteRecursively()
+            SmbCacheCatalog.notifyCacheCleared()
+        }
     }
 
     /** 单个缓存文件信息 */
@@ -362,13 +389,29 @@ object SmbImageLoader {
             ?.filter { it.isDirectory }
             ?.map { dir ->
                 val files = dir.listFiles()
+                    ?.filterNot {
+                        it.name.endsWith(".tmp") || it.name.endsWith(".meta.json") ||
+                            it.name.endsWith(".meta.tmp")
+                    }
                     ?.map { FileCacheInfo(fileName = it.name, size = it.length()) }
                     ?.sortedByDescending { it.size }
                     ?: emptyList()
-                // 尝试从文件夹名解析 server 和 share
+                // 新缓存优先从元数据读取准确身份；旧缓存保留历史文件夹名解析兜底。
+                val identity = dir.listFiles()
+                    ?.firstOrNull { it.name.endsWith(".meta.json") }
+                    ?.let { meta ->
+                        try {
+                            val json = org.json.JSONObject(meta.readText(Charsets.UTF_8))
+                            json.optString("serverAddress") to json.optString("shareName")
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
                 val parts = dir.name.split("_", limit = 2)
-                val server = parts.getOrNull(0)?.replace("_", ".")
-                val share = parts.getOrNull(1)
+                val server = identity?.first?.takeIf { it.isNotEmpty() }
+                    ?: parts.getOrNull(0)?.replace("_", ".")
+                val share = identity?.second?.takeIf { it.isNotEmpty() }
+                    ?: parts.getOrNull(1)
                 FolderCacheInfo(
                     folderName = if (share != null) "$server / $share" else dir.name,
                     serverAddress = server,
@@ -378,6 +421,7 @@ object SmbImageLoader {
                     files = files
                 )
             }
+            ?.filter { it.fileCount > 0 }
             ?.sortedByDescending { it.totalSize }
             ?: emptyList()
     }

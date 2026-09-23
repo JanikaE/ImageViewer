@@ -15,7 +15,9 @@ data class ImageItem(
     /** SMB 共享名（仅网络文件） */
     val smbShareName: String? = null,
     /** 是否为视频文件 */
-    val isVideo: Boolean = false
+    val isVideo: Boolean = false,
+    /** 网络文件已经存在的本地缓存路径，离线模式优先使用 */
+    val localCachePath: String? = null
 ) {
     companion object {
         /** 从本地 ImageFile 列表构建 ImageItem 列表 */
@@ -41,7 +43,8 @@ data class ImageItem(
                     name = file.name,
                     isNetworkFile = true,
                     smbServerAddress = serverAddress,
-                    smbShareName = shareName
+                    smbShareName = shareName,
+                    localCachePath = file.localCachePath
                 )
             }
         }
@@ -68,7 +71,8 @@ data class ImageItem(
                 isNetworkFile = true,
                 smbServerAddress = serverAddress,
                 smbShareName = shareName,
-                isVideo = true
+                isVideo = true,
+                localCachePath = file.localCachePath
             )
         }
     }
