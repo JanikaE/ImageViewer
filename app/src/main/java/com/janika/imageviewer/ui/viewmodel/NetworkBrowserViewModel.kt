@@ -39,8 +39,7 @@ data class FolderCacheProgress(
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val skippedFiles: Int = 0,
-    val failedFiles: Int = 0,
-    val isCancelling: Boolean = false
+    val failedFiles: Int = 0
 )
 
 data class NetworkBrowserState(
@@ -551,8 +550,7 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                         completedFiles = completed.get(),
                         downloadedBytes = downloadedByPath.values.sum(),
                         skippedFiles = skipped.get(),
-                        failedFiles = failed.get(),
-                        isCancelling = false
+                        failedFiles = failed.get()
                     )
                 )
             } catch (e: Exception) {
@@ -576,8 +574,13 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
         if (progress.phase == FolderCachePhase.SCANNING ||
             progress.phase == FolderCachePhase.DOWNLOADING
         ) {
+            // SMBJ 读取属于阻塞调用，协程取消与底层句柄收尾可能存在短暂延迟。
+            // 先立即结束模态等待，避免界面被“正在取消”状态锁住。
             _state.value = _state.value.copy(
-                folderCacheProgress = progress.copy(isCancelling = true)
+                folderCacheProgress = progress.copy(
+                    phase = FolderCachePhase.CANCELLED,
+                    currentFileName = ""
+                )
             )
             folderCacheJob?.cancel()
         }

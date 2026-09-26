@@ -12,9 +12,14 @@ import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.data.repository.SmbSessionManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -153,7 +158,8 @@ object SmbImageLoader {
                 }
             }
         } catch (e: Exception) {
-            // 协程取消（如页面翻走）不是下载失败，原样抛出
+            // 主动关闭句柄可能把取消表现为 SMB/IO 异常；仍须保持协程取消语义。
+            currentCoroutineContext().ensureActive()
             if (e is CancellationException) throw e
             android.util.Log.e("SmbImageLoader", "缓存SMB文件失败: $serverAddress/$shareName/$filePath", e)
             null
@@ -181,9 +187,28 @@ object SmbImageLoader {
                 SMB2CreateDisposition.FILE_OPEN,
                 setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)
             ).use { file ->
-                readAndCache(file, cacheFile, onProgress, concurrency)
+                coroutineScope {
+                    // SMBJ 的 read 是阻塞调用，单纯取消协程不会立即唤醒它。
+                    // 由独立协程在取消时关闭当前文件句柄，促使阻塞读取尽快退出。
+                    val closeOnCancellation = launch(Dispatchers.IO) {
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            try {
+                                file.close()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                    try {
+                        readAndCache(file, cacheFile, onProgress, concurrency)
+                    } finally {
+                        closeOnCancellation.cancelAndJoin()
+                    }
+                }
             }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             if (e is CancellationException) throw e
             android.util.Log.w("SmbImageLoader", "下载SMB文件失败: $serverAddress/$shareName/$filePath", e)
             null
@@ -208,7 +233,7 @@ object SmbImageLoader {
     }
 
     /** 小文件：顺序读取 */
-    private fun readAndCacheSequential(
+    private suspend fun readAndCacheSequential(
         smbFile: SmbFile,
         cacheFile: File,
         total: Long,
@@ -223,7 +248,9 @@ object SmbImageLoader {
                 val buffer = ByteArray(BUFFER_SIZE)
                 var lastCallbackTime = 0L
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val n = smbFile.read(buffer, downloaded)
+                    currentCoroutineContext().ensureActive()
                     if (n <= 0) break
                     output.write(buffer, 0, n)
                     downloaded += n
@@ -286,8 +313,10 @@ object SmbImageLoader {
                             var offset = start
                             val buffer = ByteArray(BUFFER_SIZE)
                             while (offset < end) {
+                                currentCoroutineContext().ensureActive()
                                 val want = minOf(BUFFER_SIZE.toLong(), end - offset).toInt()
                                 val r = smbFile.read(buffer, offset, 0, want)
+                                currentCoroutineContext().ensureActive()
                                 if (r <= 0) break
                                 channel.write(ByteBuffer.wrap(buffer, 0, r), offset)
                                 offset += r

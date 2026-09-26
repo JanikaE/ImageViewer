@@ -453,10 +453,6 @@ fun NetworkBrowserScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            if (progress.isCancelling) {
-                                Spacer(Modifier.height(8.dp))
-                                Text("正在取消并清理未完成文件……")
-                            }
                         }
                     }
                 }
@@ -464,8 +460,7 @@ fun NetworkBrowserScreen(
             confirmButton = {
                 if (running) {
                     TextButton(
-                        onClick = { viewModel.cancelFolderCaching() },
-                        enabled = !progress.isCancelling
+                        onClick = { viewModel.cancelFolderCaching() }
                     ) { Text("取消缓存") }
                 } else {
                     TextButton(onClick = { viewModel.dismissFolderCacheProgress() }) {
