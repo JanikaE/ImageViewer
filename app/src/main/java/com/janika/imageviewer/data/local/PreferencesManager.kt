@@ -105,6 +105,15 @@ class PreferencesManager(context: Context) {
         settingsPrefs.edit().putInt(KEY_LABEL_MAX_LINES, lines).apply()
     }
 
+    /** 是否在文件夹条目中显示直属文件、文件夹与缓存数量，默认开启 */
+    fun loadShowFolderCounts(): Boolean {
+        return settingsPrefs.getBoolean(KEY_SHOW_FOLDER_COUNTS, true)
+    }
+
+    fun saveShowFolderCounts(show: Boolean) {
+        settingsPrefs.edit().putBoolean(KEY_SHOW_FOLDER_COUNTS, show).apply()
+    }
+
     /** 大图并发分段读取的并发度，默认 5，范围 1..16 */
     fun loadSegmentConcurrency(): Int {
         return settingsPrefs.getInt(KEY_SEGMENT_CONCURRENCY, 5).coerceIn(1, 16)
@@ -144,6 +153,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_SWIPE_DIRECTION = "swipe_right_to_left"
         private const val KEY_LABEL_FONT_SCALE = "label_font_scale"
         private const val KEY_LABEL_MAX_LINES = "label_max_lines"
+        private const val KEY_SHOW_FOLDER_COUNTS = "show_folder_counts"
         private const val KEY_SEGMENT_CONCURRENCY = "segment_concurrency"
         private const val KEY_VIDEO_PLAY_MODE = "video_play_mode"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"

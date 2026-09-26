@@ -7,6 +7,11 @@
 - 界面文案、代码注释、文档说明和 Git 提交信息统一使用中文。
 - 类名、函数名、配置键、命令、依赖坐标和协议名称等代码标识保持原样。
 
+## 文档同步约定
+
+- 每次修改代码、配置或应用行为后，都必须在同一次任务中同步更新 `AGENTS.md`，确保架构、功能约束、设置项与验证方式的说明和实际实现一致。
+- 更新已有功能时优先修订对应章节；新增跨模块约定时再增加章节。不能只修改实现而遗留过时的文档说明。
+
 ## 构建与工程配置
 
 - 仓库面向 Windows，使用包装器构建：`.\gradlew.bat :app:assembleDebug`。不要假设系统 `PATH` 中存在独立安装的 `gradle`。
@@ -41,13 +46,15 @@
 - `LocalFileRepository` 直接使用 `java.io.File` 浏览 `/storage/emulated/0`，并从 `/storage` 补充可移除存储；没有使用 Storage Access Framework。
 - 本地目录列表隐藏名称以 `.` 开头的文件夹，只显示受支持的媒体文件；目录排在文件前，再按名称的小写形式排序。
 - 本地与网络目录预览都只查找目录直属层级中的第一张受支持图片，不递归搜索；网络目录会并发查询直属子目录预览。
+- 本地与网络文件网格在内容超出可视区域时，通过 `LazyGridScrollbar` 在右侧显示位置指示条；没有可滚动内容时不显示滚动条。
+- `LocalBrowserViewModel` 与 `NetworkBrowserViewModel` 按目录键在内存中保存 `LazyGridState` 的首个可见项目索引和像素偏移。进入子文件夹后返回必须恢复离开上级目录时的位置；本地根目录、网络共享列表、不同共享目录以及 `ONLINE`/`CACHE_ONLY` 模式的位置必须相互独立。该状态只要求在当前 ViewModel 生命周期内保留，不持久化到应用重启之后。
 - 支持的图片扩展名为 `png`、`jpg`、`jpeg`、`webp`、`gif`；支持的视频扩展名为 `mp4`、`mkv`、`m4v`、`webm`、`3gp`、`avi`、`mov`、`ts`、`m2ts`、`flv`、`wmv`、`ogv`。
 - Manifest 是权限分版本的事实来源：`READ_MEDIA_IMAGES` 用于 API 33+，`READ_EXTERNAL_STORAGE` 限制到 API 32，同时声明网络相关权限。`usesCleartextTraffic="true"` 是 SMB 连接所需配置。
 
 ## 偏好设置与持久化
 
 - `PreferencesManager` 使用两个 SharedPreferences 文件：`smb_connection_prefs` 保存服务器地址、用户名、密码和 JSON 编码的共享名列表；`app_settings` 保存界面、下载和视频设置。
-- 当前设置项包括 `swipe_right_to_left`、`label_font_scale`、`label_max_lines`、`segment_concurrency`、`video_play_mode`、`keep_screen_on`。大图分段并发度默认 5、范围 1..16；网络视频默认流式播放；播放时默认保持屏幕常亮。
+- 当前设置项包括 `swipe_right_to_left`、`label_font_scale`、`label_max_lines`、`show_folder_counts`、`segment_concurrency`、`video_play_mode`、`keep_screen_on`。文件夹内容数量默认显示；关闭后本地与网络浏览都应跳过目录数量统计，避免无用的文件系统或 SMB 查询。大图分段并发度默认 5、范围 1..16；网络视频默认流式播放；播放时默认保持屏幕常亮。
 - SMB 密码目前按普通字符串存储，并未使用加密存储；`allowBackup="true"` 且备份规则仍为模板状态。涉及凭据或备份策略的修改必须同时检查 `AndroidManifest.xml`、`backup_rules.xml`、`data_extraction_rules.xml` 与兼容迁移，不能默认现有数据已经加密或排除备份。
 
 ## SMB 层（SMBJ，谨慎修改）

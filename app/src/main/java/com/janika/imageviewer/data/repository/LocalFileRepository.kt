@@ -10,23 +10,38 @@ import java.io.File
  */
 class LocalFileRepository {
 
-    suspend fun getRootDirectories(): List<ImageFile> = withContext(Dispatchers.IO) {
+    suspend fun getRootDirectories(
+        includeFolderCounts: Boolean = true
+    ): List<ImageFile> = withContext(Dispatchers.IO) {
         val list = mutableListOf<ImageFile>()
 
         // 外部存储根目录
         File("/storage/emulated/0").takeIf { it.exists() }?.let { root ->
-            list.add(createDirectoryItem(root, "内部存储", includePreview = false))
+            list.add(createDirectoryItem(
+                root,
+                "内部存储",
+                includePreview = false,
+                includeFolderCounts = includeFolderCounts
+            ))
         }
 
         // 可移除存储（SD卡等）
         File("/storage").listFiles()?.filter { it.isDirectory && it.name != "emulated" && it.name != "self" }?.forEach { dir ->
-            list.add(createDirectoryItem(dir, dir.name, includePreview = false))
+            list.add(createDirectoryItem(
+                dir,
+                dir.name,
+                includePreview = false,
+                includeFolderCounts = includeFolderCounts
+            ))
         }
 
         list
     }
 
-    suspend fun listFiles(directoryPath: String): List<ImageFile> = withContext(Dispatchers.IO) {
+    suspend fun listFiles(
+        directoryPath: String,
+        includeFolderCounts: Boolean = true
+    ): List<ImageFile> = withContext(Dispatchers.IO) {
         val dir = File(directoryPath)
         if (!dir.exists() || !dir.isDirectory) return@withContext emptyList()
 
@@ -41,7 +56,11 @@ class LocalFileRepository {
             }
             ?.map { file ->
                 if (file.isDirectory) {
-                    createDirectoryItem(file, file.name)
+                    createDirectoryItem(
+                        file,
+                        file.name,
+                        includeFolderCounts = includeFolderCounts
+                    )
                 } else {
                     ImageFile(
                         name = file.name,
@@ -70,10 +89,15 @@ class LocalFileRepository {
     private fun createDirectoryItem(
         dir: File,
         displayName: String,
-        includePreview: Boolean = true
+        includePreview: Boolean = true,
+        includeFolderCounts: Boolean = true
     ): ImageFile {
-        val children = dir.listFiles()
-        val visibleDirectories = children?.filter { it.isDirectory && !it.name.startsWith(".") }
+        val children = if (includePreview || includeFolderCounts) dir.listFiles() else null
+        val visibleDirectoryCount = if (includeFolderCounts) {
+            children?.count { it.isDirectory && !it.name.startsWith(".") }
+        } else {
+            null
+        }
         val supportedFiles = children?.filter { file ->
             !file.isDirectory && file.name.substringAfterLast('.', "").lowercase().let { extension ->
                 extension in ImageFile.SUPPORTED_FORMATS || extension in ImageFile.SUPPORTED_VIDEO_FORMATS
@@ -97,8 +121,8 @@ class LocalFileRepository {
             lastModified = dir.lastModified(),
             isDirectory = true,
             previewPath = previewPath,
-            childFileCount = supportedFiles?.size,
-            childDirectoryCount = visibleDirectories?.size
+            childFileCount = if (includeFolderCounts) supportedFiles?.size else null,
+            childDirectoryCount = visibleDirectoryCount
         )
     }
 }

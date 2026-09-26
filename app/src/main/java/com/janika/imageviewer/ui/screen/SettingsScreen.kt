@@ -30,6 +30,7 @@ fun SettingsScreen(
 
     // ── 翻页设置 ──
     var swipeRightToLeft by remember { mutableStateOf(prefs.loadSwipeDirection()) }
+    var showFolderCounts by remember { mutableStateOf(prefs.loadShowFolderCounts()) }
 
     // ── SMB 网络共享设置 ──
     val savedConfig = remember { prefs.loadConfig() }
@@ -107,6 +108,32 @@ fun SettingsScreen(
 
             var labelFontScale by remember { mutableFloatStateOf(prefs.loadLabelFontScale()) }
             var labelMaxLines by remember { mutableIntStateOf(prefs.loadLabelMaxLines()) }
+
+            Card {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("显示文件夹内容数量", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "显示直属文件、文件夹与已缓存文件数量",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = showFolderCounts,
+                        onCheckedChange = { checked ->
+                            showFolderCounts = checked
+                            prefs.saveShowFolderCounts(checked)
+                        }
+                    )
+                }
+            }
 
             Card {
                 Column(

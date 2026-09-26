@@ -22,8 +22,8 @@ class SmbRepository {
 
     private data class FolderDetails(
         val previewPath: String?,
-        val fileCount: Int,
-        val directoryCount: Int
+        val fileCount: Int?,
+        val directoryCount: Int?
     )
 
     fun isConnected(): Boolean = SmbSessionManager.isConnected()
@@ -39,7 +39,8 @@ class SmbRepository {
 
     suspend fun listFiles(
         shareName: String,
-        folderPath: String = ""
+        folderPath: String = "",
+        includeFolderCounts: Boolean = true
     ): List<ImageFile> = withContext(Dispatchers.IO) {
         try {
             val share = SmbSessionManager.getDiskShare(shareName)
@@ -87,11 +88,15 @@ class SmbRepository {
                                     val name = item.fileName.trimEnd('/')
                                     name.isNotEmpty() && name != "." && name != ".."
                                 }
-                                val directoryCount = visibleItems.count { item ->
-                                    EnumWithValue.EnumUtils.isSet(
-                                        item.fileAttributes,
-                                        FileAttributes.FILE_ATTRIBUTE_DIRECTORY
-                                    ) && !item.fileName.trimEnd('/').startsWith(".")
+                                val directoryCount = if (includeFolderCounts) {
+                                    visibleItems.count { item ->
+                                        EnumWithValue.EnumUtils.isSet(
+                                            item.fileAttributes,
+                                            FileAttributes.FILE_ATTRIBUTE_DIRECTORY
+                                        ) && !item.fileName.trimEnd('/').startsWith(".")
+                                    }
+                                } else {
+                                    null
                                 }
                                 val supportedFiles = visibleItems.filter { item ->
                                     !EnumWithValue.EnumUtils.isSet(
@@ -114,7 +119,7 @@ class SmbRepository {
                                     ?.trimEnd('/')
                                 dir.path to FolderDetails(
                                     previewPath = firstImageName?.let { "${dir.path}/$it" },
-                                    fileCount = supportedFiles.size,
+                                    fileCount = if (includeFolderCounts) supportedFiles.size else null,
                                     directoryCount = directoryCount
                                 )
                             } catch (_: Exception) {

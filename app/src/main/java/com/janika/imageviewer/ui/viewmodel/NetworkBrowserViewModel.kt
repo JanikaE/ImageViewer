@@ -67,6 +67,8 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
     private val repository = SmbRepository()
     private val preferences = PreferencesManager(application)
     private var folderCacheJob: Job? = null
+    private var showFolderCounts = preferences.loadShowFolderCounts()
+    private val scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
 
     private val _state = MutableStateFlow(NetworkBrowserState())
     val state: StateFlow<NetworkBrowserState> = _state.asStateFlow()
@@ -273,7 +275,12 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                     }
                 }
                 val files = annotateOnlineFiles(
-                    repository.listFiles(shareName), config.serverAddress, shareName
+                    repository.listFiles(
+                        shareName,
+                        includeFolderCounts = showFolderCounts
+                    ),
+                    config.serverAddress,
+                    shareName
                 )
                 _state.value = _state.value.copy(
                     shareName = shareName,
@@ -307,7 +314,11 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                     }
                 } else {
                     annotateOnlineFiles(
-                        repository.listFiles(config.shareName, folderPath),
+                        repository.listFiles(
+                            config.shareName,
+                            folderPath,
+                            includeFolderCounts = showFolderCounts
+                        ),
                         config.serverAddress,
                         config.shareName
                     )
@@ -353,6 +364,46 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                 val parentName = parentPath.substringAfterLast('/').ifEmpty { _state.value.shareName }
                 navigateToFolder(parentPath, parentName)
             }
+        }
+    }
+
+    fun scrollKey(): String {
+        val current = _state.value
+        val location = if (current.shareName.isEmpty()) {
+            "shares"
+        } else {
+            "${current.shareName}:${current.currentPath}"
+        }
+        return "network:${current.browseMode}:${current.serverAddress}:$location"
+    }
+
+    fun loadScrollPosition(key: String): Pair<Int, Int> = scrollPositions[key] ?: (0 to 0)
+
+    fun saveScrollPosition(key: String, index: Int, offset: Int) {
+        scrollPositions[key] = index to offset
+    }
+
+    /** 设置变化时更新当前列表；开启统计需要重新读取目录，关闭时可直接移除数量。 */
+    fun updateFolderCountSetting(show: Boolean) {
+        if (showFolderCounts == show) return
+        showFolderCounts = show
+        val current = _state.value
+        if (!show) {
+            _state.value = current.copy(
+                files = current.files.map { file ->
+                    if (file.isDirectory) {
+                        file.copy(
+                            childFileCount = null,
+                            childDirectoryCount = null,
+                            cachedChildFileCount = null
+                        )
+                    } else {
+                        file
+                    }
+                }
+            )
+        } else if (current.shareName.isNotEmpty()) {
+            navigateToFolder(current.currentPath, current.currentFolderName)
         }
     }
 
@@ -569,11 +620,15 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
     ): List<ImageFile> = withContext(Dispatchers.IO) {
         files.map { file ->
             if (file.isDirectory) {
-                file.copy(
-                    cachedChildFileCount = SmbCacheCatalog.getDirectCachedFileCount(
-                        appContext, serverAddress, shareName, file.path
+                if (showFolderCounts) {
+                    file.copy(
+                        cachedChildFileCount = SmbCacheCatalog.getDirectCachedFileCount(
+                            appContext, serverAddress, shareName, file.path
+                        )
                     )
-                )
+                } else {
+                    file.copy(cachedChildFileCount = null)
+                }
             } else {
                 file.copy(
                     localCachePath = SmbImageLoader.getCachePath(

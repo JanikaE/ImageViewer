@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -27,6 +28,7 @@ import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.ui.component.FolderContentCount
+import com.janika.imageviewer.ui.component.LazyGridScrollbar
 import com.janika.imageviewer.ui.viewmodel.LocalBrowserViewModel
 import com.janika.imageviewer.util.VideoThumbnailLoader
 import kotlinx.coroutines.Dispatchers
@@ -45,10 +47,40 @@ fun LocalBrowserScreen(
     val prefs = remember { PreferencesManager(context) }
     val labelFontScale = prefs.loadLabelFontScale()
     val labelMaxLines = prefs.loadLabelMaxLines()
+    val showFolderCounts = prefs.loadShowFolderCounts()
+    val scrollKey = viewModel.scrollKey()
+    val savedScrollPosition = viewModel.loadScrollPosition(scrollKey)
+    val gridState = key(scrollKey) {
+        rememberLazyGridState(
+            initialFirstVisibleItemIndex = savedScrollPosition.first,
+            initialFirstVisibleItemScrollOffset = savedScrollPosition.second
+        )
+    }
+
+    LaunchedEffect(scrollKey, gridState) {
+        snapshotFlow {
+            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            viewModel.saveScrollPosition(scrollKey, index, offset)
+        }
+    }
+
+    fun saveCurrentScrollPosition() {
+        viewModel.saveScrollPosition(
+            scrollKey,
+            gridState.firstVisibleItemIndex,
+            gridState.firstVisibleItemScrollOffset
+        )
+    }
+
+    LaunchedEffect(showFolderCounts) {
+        viewModel.updateFolderCountSetting(showFolderCounts)
+    }
 
     // 系统返回键与左上角返回行为一致
     val canGoBack = state.hasParent || !state.isRootLevel
     BackHandler(enabled = canGoBack) {
+        saveCurrentScrollPosition()
         viewModel.navigateUp()
     }
 
@@ -67,7 +99,10 @@ fun LocalBrowserScreen(
             },
             navigationIcon = {
                 if (state.hasParent || !state.isRootLevel) {
-                    IconButton(onClick = { viewModel.navigateUp() }) {
+                    IconButton(onClick = {
+                        saveCurrentScrollPosition()
+                        viewModel.navigateUp()
+                    }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回上级")
                     }
                 }
@@ -103,31 +138,45 @@ fun LocalBrowserScreen(
                 }
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 120.dp),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(state.files, key = { it.path }) { file ->
-                    FileGridItem(
-                        file = file,
-                        labelFontScale = labelFontScale,
-                        labelMaxLines = labelMaxLines,
-                        onClick = {
-                            if (file.isDirectory) {
-                                viewModel.navigateTo(file.path, file.name)
-                            } else if (file.isVideo) {
-                                onVideoClick(file)
-                            } else {
-                                // 过滤出所有图片文件并传递索引
-                                val imageFiles = state.files.filter { !it.isDirectory && it.isImage }
-                                val idx = imageFiles.indexOf(file)
-                                onImageClick(imageFiles, idx.coerceAtLeast(0))
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 120.dp),
+                    state = gridState,
+                    contentPadding = PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(state.files, key = { it.path }) { file ->
+                        FileGridItem(
+                            file = file,
+                            labelFontScale = labelFontScale,
+                            labelMaxLines = labelMaxLines,
+                            showFolderCounts = showFolderCounts,
+                            onClick = {
+                                if (file.isDirectory) {
+                                    saveCurrentScrollPosition()
+                                    viewModel.navigateTo(file.path, file.name)
+                                } else if (file.isVideo) {
+                                    onVideoClick(file)
+                                } else {
+                                    // 过滤出所有图片文件并传递索引
+                                    val imageFiles = state.files.filter { !it.isDirectory && it.isImage }
+                                    val idx = imageFiles.indexOf(file)
+                                    onImageClick(imageFiles, idx.coerceAtLeast(0))
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
+                LazyGridScrollbar(
+                    state = gridState,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(vertical = 8.dp, horizontal = 2.dp)
+                        .width(4.dp)
+                        .fillMaxHeight()
+                )
             }
         }
     }
@@ -138,6 +187,7 @@ private fun FileGridItem(
     file: ImageFile,
     labelFontScale: Float,
     labelMaxLines: Int,
+    showFolderCounts: Boolean,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -176,13 +226,15 @@ private fun FileGridItem(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    FolderContentCount(
-                        fileCount = file.childFileCount,
-                        directoryCount = file.childDirectoryCount,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(4.dp)
-                    )
+                    if (showFolderCounts) {
+                        FolderContentCount(
+                            fileCount = file.childFileCount,
+                            directoryCount = file.childDirectoryCount,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(4.dp)
+                        )
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -219,11 +271,13 @@ private fun FileGridItem(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(8.dp)
                     ) {
-                        FolderContentCount(
-                            fileCount = file.childFileCount,
-                            directoryCount = file.childDirectoryCount
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        if (showFolderCounts) {
+                            FolderContentCount(
+                                fileCount = file.childFileCount,
+                                directoryCount = file.childDirectoryCount
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                         Icon(
                             Icons.Default.Folder,
                             contentDescription = null,

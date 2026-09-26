@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -27,6 +28,7 @@ import coil.request.ImageRequest
 import com.janika.imageviewer.data.model.ImageFile
 import com.janika.imageviewer.data.local.PreferencesManager
 import com.janika.imageviewer.ui.component.FolderContentCount
+import com.janika.imageviewer.ui.component.LazyGridScrollbar
 import com.janika.imageviewer.ui.viewmodel.FolderCachePhase
 import com.janika.imageviewer.ui.viewmodel.NetworkBrowserViewModel
 import com.janika.imageviewer.ui.viewmodel.NetworkBrowseMode
@@ -49,7 +51,36 @@ fun NetworkBrowserScreen(
     val prefs = remember { PreferencesManager(context) }
     val labelFontScale = prefs.loadLabelFontScale()
     val labelMaxLines = prefs.loadLabelMaxLines()
+    val showFolderCounts = prefs.loadShowFolderCounts()
     var cacheConfirmFolder by remember { mutableStateOf<ImageFile?>(null) }
+    val scrollKey = viewModel.scrollKey()
+    val savedScrollPosition = viewModel.loadScrollPosition(scrollKey)
+    val gridState = key(scrollKey) {
+        rememberLazyGridState(
+            initialFirstVisibleItemIndex = savedScrollPosition.first,
+            initialFirstVisibleItemScrollOffset = savedScrollPosition.second
+        )
+    }
+
+    LaunchedEffect(scrollKey, gridState) {
+        snapshotFlow {
+            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            viewModel.saveScrollPosition(scrollKey, index, offset)
+        }
+    }
+
+    fun saveCurrentScrollPosition() {
+        viewModel.saveScrollPosition(
+            scrollKey,
+            gridState.firstVisibleItemIndex,
+            gridState.firstVisibleItemScrollOffset
+        )
+    }
+
+    LaunchedEffect(showFolderCounts) {
+        viewModel.updateFolderCountSetting(showFolderCounts)
+    }
 
     // 进入页面时刷新共享名列表（设置页可能已修改）
     LaunchedEffect(Unit) { viewModel.refreshShares() }
@@ -57,6 +88,7 @@ fun NetworkBrowserScreen(
     // 拦截系统返回键
     BackHandler(enabled = state.isConnected || state.browseMode == NetworkBrowseMode.CACHE_ONLY) {
         if (state.shareName.isNotEmpty()) {
+            saveCurrentScrollPosition()
             viewModel.navigateUp()
         } else {
             viewModel.disconnect()
@@ -86,6 +118,7 @@ fun NetworkBrowserScreen(
                 ) {
                     IconButton(onClick = {
                         if (state.shareName.isNotEmpty()) {
+                            saveCurrentScrollPosition()
                             viewModel.navigateUp()
                         } else {
                             viewModel.disconnect()
@@ -166,95 +199,126 @@ fun NetworkBrowserScreen(
             }
             state.shareName.isEmpty() && state.shares.isNotEmpty() -> {
                 // 显示已配置的共享文件夹列表
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 120.dp),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(state.shares, key = { it }) { share ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .clickable { viewModel.openShare(share) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            )
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 120.dp),
+                        state = gridState,
+                        contentPadding = PaddingValues(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(state.shares, key = { it }) { share ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .clickable {
+                                        saveCurrentScrollPosition()
+                                        viewModel.openShare(share)
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
                             ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(8.dp)
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        Icons.Default.Dns,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(48.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = share,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.padding(8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Dns,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(48.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = share,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+                    LazyGridScrollbar(
+                        state = gridState,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(vertical = 8.dp, horizontal = 2.dp)
+                            .width(4.dp)
+                            .fillMaxHeight()
+                    )
                 }
             }
             state.files.isNotEmpty() -> {
                 // 显示文件列表
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 120.dp),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(state.files, key = { it.path }) { file ->
-                        val cachePath = file.localCachePath ?: if (!file.isDirectory) {
-                            SmbImageLoader.getCachePath(
-                                context, state.serverAddress, state.shareName, file.path
-                            )
-                        } else null
-                        NetworkFileGridItem(
-                            file = file,
-                            cachePath = cachePath,
-                            serverAddress = state.serverAddress,
-                            shareName = state.shareName,
-                            cacheOnly = state.browseMode == NetworkBrowseMode.CACHE_ONLY,
-                            labelFontScale = labelFontScale,
-                            labelMaxLines = labelMaxLines,
-                            onFolderClick = {
-                                viewModel.navigateToFolder(file.path, file.name)
-                            },
-                            onFolderLongClick = {
-                                if (state.browseMode == NetworkBrowseMode.ONLINE) {
-                                    cacheConfirmFolder = file
-                                }
-                            },
-                            onVideoClick = {
-                                onVideoClick(file, state.serverAddress, state.shareName)
-                            },
-                            onImageClick = {
-                                // 过滤出所有图片文件并传递索引
-                                val imageFiles = state.files.filter { !it.isDirectory && it.isImage }
-                                val idx = imageFiles.indexOf(file)
-                                onImageClick(
-                                    imageFiles,
-                                    idx.coerceAtLeast(0),
-                                    state.serverAddress,
-                                    state.shareName
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 120.dp),
+                        state = gridState,
+                        contentPadding = PaddingValues(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(state.files, key = { it.path }) { file ->
+                            val cachePath = file.localCachePath ?: if (!file.isDirectory) {
+                                SmbImageLoader.getCachePath(
+                                    context, state.serverAddress, state.shareName, file.path
                                 )
-                            }
-                        )
+                            } else null
+                            NetworkFileGridItem(
+                                file = file,
+                                cachePath = cachePath,
+                                serverAddress = state.serverAddress,
+                                shareName = state.shareName,
+                                cacheOnly = state.browseMode == NetworkBrowseMode.CACHE_ONLY,
+                                labelFontScale = labelFontScale,
+                                labelMaxLines = labelMaxLines,
+                                showFolderCounts = showFolderCounts,
+                                onFolderClick = {
+                                    saveCurrentScrollPosition()
+                                    viewModel.navigateToFolder(file.path, file.name)
+                                },
+                                onFolderLongClick = {
+                                    if (state.browseMode == NetworkBrowseMode.ONLINE) {
+                                        cacheConfirmFolder = file
+                                    }
+                                },
+                                onVideoClick = {
+                                    onVideoClick(file, state.serverAddress, state.shareName)
+                                },
+                                onImageClick = {
+                                    // 过滤出所有图片文件并传递索引
+                                    val imageFiles = state.files.filter {
+                                        !it.isDirectory && it.isImage
+                                    }
+                                    val idx = imageFiles.indexOf(file)
+                                    onImageClick(
+                                        imageFiles,
+                                        idx.coerceAtLeast(0),
+                                        state.serverAddress,
+                                        state.shareName
+                                    )
+                                }
+                            )
+                        }
                     }
+                    LazyGridScrollbar(
+                        state = gridState,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(vertical = 8.dp, horizontal = 2.dp)
+                            .width(4.dp)
+                            .fillMaxHeight()
+                    )
                 }
             }
             state.shareName.isEmpty() && state.shares.isEmpty() -> {
@@ -423,6 +487,7 @@ private fun NetworkFileGridItem(
     cacheOnly: Boolean,
     labelFontScale: Float,
     labelMaxLines: Int,
+    showFolderCounts: Boolean,
     onFolderClick: () -> Unit,
     onFolderLongClick: () -> Unit,
     onVideoClick: () -> Unit,
@@ -471,19 +536,22 @@ private fun NetworkFileGridItem(
                         cachedPreviewPath = file.localCachePath,
                         cacheOnly = cacheOnly,
                         labelFontScale = labelFontScale,
-                        labelMaxLines = labelMaxLines
+                        labelMaxLines = labelMaxLines,
+                        showFolderCounts = showFolderCounts
                     )
                 } else {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(8.dp)
                     ) {
-                        FolderContentCount(
-                            fileCount = file.childFileCount,
-                            directoryCount = file.childDirectoryCount,
-                            cachedFileCount = if (cacheOnly) null else file.cachedChildFileCount
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        if (showFolderCounts) {
+                            FolderContentCount(
+                                fileCount = file.childFileCount,
+                                directoryCount = file.childDirectoryCount,
+                                cachedFileCount = if (cacheOnly) null else file.cachedChildFileCount
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                         Icon(
                             Icons.Default.Folder,
                             contentDescription = null,
@@ -608,7 +676,8 @@ private fun NetworkFolderPreview(
     cachedPreviewPath: String?,
     cacheOnly: Boolean,
     labelFontScale: Float,
-    labelMaxLines: Int
+    labelMaxLines: Int,
+    showFolderCounts: Boolean
 ) {
     val context = LocalContext.current
     var cachedPath by remember(cachedPreviewPath) { mutableStateOf(cachedPreviewPath) }
@@ -645,14 +714,16 @@ private fun NetworkFolderPreview(
                 tint = MaterialTheme.colorScheme.primary
             )
         }
-        FolderContentCount(
-            fileCount = childFileCount,
-            directoryCount = childDirectoryCount,
-            cachedFileCount = if (cacheOnly) null else cachedChildFileCount,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(4.dp)
-        )
+        if (showFolderCounts) {
+            FolderContentCount(
+                fileCount = childFileCount,
+                directoryCount = childDirectoryCount,
+                cachedFileCount = if (cacheOnly) null else cachedChildFileCount,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(4.dp)
+            )
+        }
         // 文件夹名标签
         Box(
             modifier = Modifier
