@@ -43,9 +43,6 @@ fun ImageViewerApp() {
     // 视频播放器状态（单个视频）
     var rawVideoItem by remember { mutableStateOf<ImageItem?>(null) }
 
-    // 是否已保存网络配置
-    val hasNetworkConfig = prefs.loadConfig() != null
-
     // 根据滑动方向配置调整列表顺序
     val swipeRightToLeft = prefs.loadSwipeDirection()
     val displayList = if (swipeRightToLeft) rawImageList.reversed() else rawImageList
@@ -68,7 +65,9 @@ fun ImageViewerApp() {
                     onNavigateToLocal = { navController.navigate("local") },
                     onNavigateToNetwork = { navController.navigate("network") },
                     onNavigateToSettings = { navController.navigate("settings") },
-                    hasNetworkConfig = prefs.loadConfig() != null
+                    hasNetworkConfig = prefs.loadServerConfigs().any {
+                        it.enabled && it.shareNames.isNotEmpty()
+                    }
                 )
             }
 

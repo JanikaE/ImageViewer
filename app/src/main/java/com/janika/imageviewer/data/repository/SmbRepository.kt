@@ -26,7 +26,7 @@ class SmbRepository {
         val directoryCount: Int?
     )
 
-    fun isConnected(): Boolean = SmbSessionManager.isConnected()
+    fun isConnected(serverAddress: String): Boolean = SmbSessionManager.isConnected(serverAddress)
 
     suspend fun connect(
         serverAddress: String,
@@ -35,15 +35,18 @@ class SmbRepository {
         domain: String? = null
     ): Boolean = SmbSessionManager.connect(serverAddress, username, password, domain)
 
-    fun disconnect() = SmbSessionManager.disconnect()
+    fun disconnect(serverAddress: String) = SmbSessionManager.disconnect(serverAddress)
+
+    fun disconnectAll() = SmbSessionManager.disconnectAll()
 
     suspend fun listFiles(
+        serverAddress: String,
         shareName: String,
         folderPath: String = "",
         includeFolderCounts: Boolean = true
     ): List<ImageFile> = withContext(Dispatchers.IO) {
         try {
-            val share = SmbSessionManager.getDiskShare(shareName)
+            val share = SmbSessionManager.getDiskShare(serverAddress, shareName)
             val fileList = share.list(folderPath) ?: return@withContext emptyList()
 
             val items = fileList.mapNotNull { info ->
@@ -157,11 +160,12 @@ class SmbRepository {
      * 递归枚举文件夹中的全部受支持媒体文件。隐藏文件夹和不支持的文件会被忽略。
      */
     suspend fun listMediaFilesRecursively(
+        serverAddress: String,
         shareName: String,
         folderPath: String,
         onScanningDirectory: (String) -> Unit = {}
     ): List<ImageFile> = withContext(Dispatchers.IO) {
-        val share = SmbSessionManager.getDiskShare(shareName)
+        val share = SmbSessionManager.getDiskShare(serverAddress, shareName)
         val result = mutableListOf<ImageFile>()
 
         suspend fun scan(path: String) {

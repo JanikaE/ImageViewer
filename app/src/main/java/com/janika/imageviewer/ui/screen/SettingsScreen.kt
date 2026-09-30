@@ -17,6 +17,7 @@ import com.janika.imageviewer.data.repository.SmbSessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,22 +27,13 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val prefs = remember { PreferencesManager(context) }
-    val scope = rememberCoroutineScope()
-
     // ── 翻页设置 ──
     var swipeRightToLeft by remember { mutableStateOf(prefs.loadSwipeDirection()) }
     var showFolderCounts by remember { mutableStateOf(prefs.loadShowFolderCounts()) }
 
     // ── SMB 网络共享设置 ──
-    val savedConfig = remember { prefs.loadConfig() }
-    var serverAddress by remember { mutableStateOf(savedConfig?.serverAddress ?: "") }
-    var username by remember { mutableStateOf(savedConfig?.username ?: "") }
-    var password by remember { mutableStateOf(savedConfig?.password ?: "") }
-    var shareNames by remember { mutableStateOf(savedConfig?.shareNames ?: emptyList()) }
-    var newShareName by remember { mutableStateOf("") }
-    var isConnecting by remember { mutableStateOf(false) }
-    var connectError by remember { mutableStateOf<String?>(null) }
-    var connectSuccess by remember { mutableStateOf(false) }
+    var serverConfigs by remember { mutableStateOf(prefs.loadServerConfigs()) }
+    var editingServer by remember { mutableStateOf<PreferencesManager.SmbServerConfig?>(null) }
 
     // ── 视频播放设置 ──
     var videoPlayMode by remember { mutableStateOf(prefs.loadVideoPlayMode()) }
@@ -334,207 +326,77 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            Card {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedTextField(
-                        value = serverAddress,
-                        onValueChange = { serverAddress = it; connectSuccess = false; connectError = null },
-                        label = { Text("服务器地址") },
-                        placeholder = { Text("例如: 192.168.1.100") },
-                        leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !isConnecting
-                    )
-
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it; connectSuccess = false; connectError = null },
-                        label = { Text("用户名（可选）") },
-                        placeholder = { Text("匿名登录留空") },
-                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !isConnecting
-                    )
-
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; connectSuccess = false; connectError = null },
-                        label = { Text("密码（可选）") },
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !isConnecting
-                    )
-
-                    // ── 共享名列表（手动配置） ──
-                    Text(
-                        text = "共享名列表",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    shareNames.forEach { share ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                Icons.Default.Folder,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
+            serverConfigs.forEach { config ->
+                Card {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Dns, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(config.serverAddress, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "${config.shareNames.size} 个共享",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = config.enabled,
+                                onCheckedChange = { enabled ->
+                                    prefs.setServerEnabled(config.id, enabled)
+                                    if (!enabled) SmbSessionManager.disconnect(config.serverAddress)
+                                    serverConfigs = prefs.loadServerConfigs()
+                                }
                             )
-                            Spacer(Modifier.width(6.dp))
+                        }
+                        if (config.shareNames.isNotEmpty()) {
                             Text(
-                                text = share,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
+                                config.shareNames.joinToString("、"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            IconButton(onClick = {
-                                shareNames = shareNames.filter { it != share }
-                                prefs.saveShareNames(shareNames)
-                                connectSuccess = false
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { editingServer = config }) {
+                                Icon(Icons.Default.Edit, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("编辑")
+                            }
+                            TextButton(onClick = {
+                                SmbSessionManager.disconnect(config.serverAddress)
+                                prefs.removeServerConfig(config.id)
+                                serverConfigs = prefs.loadServerConfigs()
                             }) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "删除",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value = newShareName,
-                            onValueChange = { newShareName = it; connectSuccess = false },
-                            label = { Text("共享名") },
-                            placeholder = { Text("例如: doujinshi") },
-                            leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            enabled = !isConnecting
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                val name = newShareName.trim()
-                                if (name.isNotEmpty() && !shareNames.contains(name)) {
-                                    shareNames = shareNames + name
-                                    prefs.saveShareNames(shareNames)
-                                    newShareName = ""
-                                    connectSuccess = false
-                                }
-                            },
-                            enabled = !isConnecting && newShareName.isNotBlank()
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null)
-                            Text("添加")
-                        }
-                    }
-                    if (shareNames.isEmpty()) {
-                        Text(
-                            text = "还没有配置共享名，添加后可在网络页直接打开",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // 连接状态
-                    if (connectSuccess) {
-                        Text(
-                            text = "✓ 连接成功",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    connectError?.let { err ->
-                        Text(
-                            text = err,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                if (serverAddress.isBlank()) {
-                                    connectError = "请输入服务器地址"
-                                    return@Button
-                                }
-                                isConnecting = true
-                                connectError = null
-                                connectSuccess = false
-                                scope.launch {
-                                    val ok = withContext(Dispatchers.IO) {
-                                        SmbSessionManager.testConnection(
-                                            serverAddress = serverAddress,
-                                            username = username.ifEmpty { null },
-                                            password = password.ifEmpty { null },
-                                            domain = null,
-                                            shareName = shareNames.firstOrNull()
-                                        )
-                                    }
-                                    isConnecting = false
-                                    if (ok) {
-                                        connectSuccess = true
-                                        prefs.saveConfig(
-                                            PreferencesManager.SmbConnectionConfig(
-                                                serverAddress = serverAddress,
-                                                username = username,
-                                                password = password,
-                                                shareNames = shareNames
-                                            )
-                                        )
-                                    } else {
-                                        connectError = "无法连接到服务器，请检查地址、凭据或共享名"
-                                    }
-                                }
-                            },
-                            enabled = !isConnecting && serverAddress.isNotBlank(),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (isConnecting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text("连接测试")
-                        }
-
-                        if (savedConfig != null) {
-                            OutlinedButton(
-                                onClick = {
-                                    prefs.clearConfig()
-                                    serverAddress = ""
-                                    username = ""
-                                    password = ""
-                                    shareNames = emptyList()
-                                    newShareName = ""
-                                    connectSuccess = false
-                                    connectError = null
-                                }
-                            ) {
-                                Text("清除", color = MaterialTheme.colorScheme.error)
+                                Text("删除", color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
                 }
+            }
+            OutlinedButton(
+                onClick = {
+                    editingServer = PreferencesManager.SmbServerConfig(
+                        id = UUID.randomUUID().toString(),
+                        serverAddress = "",
+                        username = "",
+                        password = ""
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("添加服务器")
+            }
+            if (serverConfigs.isEmpty()) {
+                Text(
+                    "还没有服务器配置，添加后可在网络页浏览已启用的共享。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             // ── 缓存管理 ──
@@ -570,4 +432,178 @@ fun SettingsScreen(
             }
         }
     }
+
+    editingServer?.let { original ->
+        SmbServerEditorDialog(
+            original = original,
+            existingConfigs = serverConfigs,
+            onDismiss = { editingServer = null },
+            onSave = { updated ->
+                SmbSessionManager.disconnect(original.serverAddress)
+                prefs.upsertServerConfig(updated)
+                serverConfigs = prefs.loadServerConfigs()
+                editingServer = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun SmbServerEditorDialog(
+    original: PreferencesManager.SmbServerConfig,
+    existingConfigs: List<PreferencesManager.SmbServerConfig>,
+    onDismiss: () -> Unit,
+    onSave: (PreferencesManager.SmbServerConfig) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var serverAddress by remember(original.id) { mutableStateOf(original.serverAddress) }
+    var username by remember(original.id) { mutableStateOf(original.username) }
+    var password by remember(original.id) { mutableStateOf(original.password) }
+    var enabled by remember(original.id) { mutableStateOf(original.enabled) }
+    var shareNames by remember(original.id) { mutableStateOf(original.shareNames) }
+    var newShareName by remember(original.id) { mutableStateOf("") }
+    var isTesting by remember(original.id) { mutableStateOf(false) }
+    var resultMessage by remember(original.id) { mutableStateOf<String?>(null) }
+
+    fun buildConfig() = original.copy(
+        serverAddress = serverAddress.trim(),
+        username = username,
+        password = password,
+        enabled = enabled,
+        shareNames = shareNames
+    )
+
+    val duplicateAddress = existingConfigs.any {
+        it.id != original.id && it.serverAddress.equals(serverAddress.trim(), ignoreCase = true)
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isTesting) onDismiss() },
+        title = { Text(if (original.serverAddress.isBlank()) "添加服务器" else "编辑服务器") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = serverAddress,
+                    onValueChange = { serverAddress = it; resultMessage = null },
+                    label = { Text("服务器地址") },
+                    placeholder = { Text("例如: 192.168.1.100") },
+                    singleLine = true,
+                    enabled = !isTesting,
+                    isError = duplicateAddress,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (duplicateAddress) {
+                    Text("此服务器地址已经存在", color = MaterialTheme.colorScheme.error)
+                }
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it; resultMessage = null },
+                    label = { Text("用户名（可选）") },
+                    singleLine = true,
+                    enabled = !isTesting,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; resultMessage = null },
+                    label = { Text("密码（可选）") },
+                    singleLine = true,
+                    enabled = !isTesting,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("启用此服务器", modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                Text("共享名列表", style = MaterialTheme.typography.titleSmall)
+                shareNames.forEach { share ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(share, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { shareNames = shareNames.filterNot { it == share } }) {
+                            Icon(Icons.Default.Close, contentDescription = "删除共享")
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newShareName,
+                        onValueChange = { newShareName = it },
+                        label = { Text("共享名") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            val name = newShareName.trim()
+                            if (name.isNotEmpty() && shareNames.none { it.equals(name, ignoreCase = true) }) {
+                                shareNames = shareNames + name
+                            }
+                            newShareName = ""
+                        },
+                        enabled = newShareName.isNotBlank()
+                    ) { Text("添加") }
+                }
+                resultMessage?.let {
+                    Text(
+                        it,
+                        color = if (it.startsWith("连接成功")) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        isTesting = true
+                        resultMessage = null
+                        scope.launch {
+                            val failedShares = withContext(Dispatchers.IO) {
+                                if (shareNames.isEmpty()) {
+                                    val connected = SmbSessionManager.testConnection(
+                                        serverAddress.trim(),
+                                        username.ifEmpty { null },
+                                        password.ifEmpty { null },
+                                        null
+                                    )
+                                    if (connected) emptyList() else listOf("服务器连接")
+                                } else {
+                                    shareNames.filterNot { share ->
+                                        SmbSessionManager.testConnection(
+                                            serverAddress.trim(),
+                                            username.ifEmpty { null },
+                                            password.ifEmpty { null },
+                                            null,
+                                            share
+                                        )
+                                    }
+                                }
+                            }
+                            isTesting = false
+                            resultMessage = if (failedShares.isEmpty()) "连接成功"
+                            else "无法访问共享：${failedShares.joinToString("、")}"
+                        }
+                    },
+                    enabled = !isTesting && serverAddress.isNotBlank() && !duplicateAddress,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isTesting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text("连接测试")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(buildConfig()) },
+                enabled = serverAddress.isNotBlank() && !duplicateAddress && !isTesting
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !isTesting) { Text("取消") } }
+    )
 }

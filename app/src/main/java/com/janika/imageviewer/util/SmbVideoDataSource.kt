@@ -23,6 +23,7 @@ import com.janika.imageviewer.data.repository.SmbSessionManager
  */
 @UnstableApi
 class SmbVideoDataSource(
+    private val serverAddress: String,
     private val shareName: String,
     private val filePath: String,
     private val onBytesRead: (Long) -> Unit = {}
@@ -36,7 +37,7 @@ class SmbVideoDataSource(
     override fun open(dataSpec: DataSpec): Long {
         transferStarted(dataSpec)
         uri = dataSpec.uri
-        val file = SmbSessionManager.getDiskShare(shareName).openFile(
+        val file = SmbSessionManager.getDiskShare(serverAddress, shareName).openFile(
             filePath,
             setOf(AccessMask.GENERIC_READ),
             setOf(FileAttributes.FILE_ATTRIBUTE_NORMAL),

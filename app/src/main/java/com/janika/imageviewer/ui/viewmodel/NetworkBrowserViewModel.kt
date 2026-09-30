@@ -11,6 +11,7 @@ import com.janika.imageviewer.util.SmbImageLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -29,6 +30,12 @@ enum class NetworkBrowseMode { ONLINE, CACHE_ONLY }
 
 enum class FolderCachePhase { SCANNING, DOWNLOADING, COMPLETED, CANCELLED }
 
+data class NetworkShareTarget(
+    val serverId: String,
+    val serverAddress: String,
+    val shareName: String
+)
+
 data class FolderCacheProgress(
     val folderName: String,
     val phase: FolderCachePhase,
@@ -44,21 +51,18 @@ data class FolderCacheProgress(
 
 data class NetworkBrowserState(
     val serverAddress: String = "",
+    val serverId: String = "",
     val shareName: String = "",
     val currentPath: String = "",
     val currentFolderName: String = "网络共享",
     val files: List<ImageFile> = emptyList(),
-    val shares: List<String> = emptyList(),
+    val shareTargets: List<NetworkShareTarget> = emptyList(),
     val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val browseMode: NetworkBrowseMode = NetworkBrowseMode.ONLINE,
     val cacheAvailable: Boolean = false,
     val folderCacheProgress: FolderCacheProgress? = null,
-    val error: String? = null,
-    // 配置状态（从 PreferencesManager 加载）
-    val configServerAddress: String = "",
-    val configUsername: String = "",
-    val configPassword: String = ""
+    val error: String? = null
 )
 
 class NetworkBrowserViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,27 +72,14 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
     private var folderCacheJob: Job? = null
     private var showFolderCounts = preferences.loadShowFolderCounts()
     private val scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
+    private var configs = preferences.loadServerConfigs()
 
-    private val _state = MutableStateFlow(NetworkBrowserState())
+    private val _state = MutableStateFlow(
+        NetworkBrowserState(shareTargets = buildTargets(configs))
+    )
     val state: StateFlow<NetworkBrowserState> = _state.asStateFlow()
 
     init {
-        // 加载上次保存的配置并自动连接
-        val savedConfig = preferences.loadConfig()
-        if (savedConfig != null) {
-            _state.value = _state.value.copy(
-                configServerAddress = savedConfig.serverAddress,
-                configUsername = savedConfig.username,
-                configPassword = savedConfig.password,
-                serverAddress = savedConfig.serverAddress,
-                shares = savedConfig.shareNames,
-                cacheAvailable = SmbCacheCatalog.hasCache(appContext, savedConfig.serverAddress)
-            )
-            // 自动尝试连接
-            autoConnect(savedConfig)
-        }
-
-        // 预览图或查看器新增缓存后，及时刷新当前目录的缓存标记与数量。
         viewModelScope.launch {
             SmbCacheCatalog.revision.collect {
                 val current = _state.value
@@ -99,227 +90,82 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                         files = annotateOnlineFiles(
                             current.files, current.serverAddress, current.shareName
                         ),
-                        cacheAvailable = SmbCacheCatalog.hasCache(
-                            appContext, current.serverAddress
-                        )
+                        cacheAvailable = hasTargetCache(current.serverAddress, current.shareName)
                     )
                 }
             }
         }
     }
 
-    private fun autoConnect(config: PreferencesManager.SmbConnectionConfig) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            try {
-                // 冷启动时网络可能未就绪，重试最多 3 次
-                var connected = false
-                var lastError: String? = null
-                for (attempt in 1..3) {
-                    connected = repository.connect(
-                        serverAddress = config.serverAddress,
-                        username = config.username.ifEmpty { null },
-                        password = config.password.ifEmpty { null }
-                    )
-                    if (connected) break
-                    lastError = "无法连接到服务器，请检查设置中的地址和凭据"
-                    if (attempt < 3) kotlinx.coroutines.delay(1000L * attempt)
-                }
-                if (connected) {
-                    val previous = _state.value
-                    _state.value = _state.value.copy(
-                        serverAddress = config.serverAddress,
-                        shares = config.shareNames,
-                        isLoading = false,
-                        isConnected = true,
-                        browseMode = NetworkBrowseMode.ONLINE,
-                        error = null
-                    )
-                    if (previous.browseMode == NetworkBrowseMode.CACHE_ONLY &&
-                        previous.shareName.isNotEmpty()
-                    ) {
-                        navigateToFolder(previous.currentPath, previous.currentFolderName)
-                    }
-                } else {
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        isConnected = false,
-                        cacheAvailable = SmbCacheCatalog.hasCache(appContext, config.serverAddress),
-                        error = lastError
-                    )
-                }
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    isConnected = false,
-                    cacheAvailable = SmbCacheCatalog.hasCache(appContext, config.serverAddress),
-                    error = "连接失败: ${e.message}"
-                )
-            }
-        }
-    }
-
-    fun updateConfigServerAddress(address: String) {
-        _state.value = _state.value.copy(configServerAddress = address)
-    }
-
-    fun updateConfigUsername(username: String) {
-        _state.value = _state.value.copy(configUsername = username)
-    }
-
-    fun updateConfigPassword(password: String) {
-        _state.value = _state.value.copy(configPassword = password)
-    }
-
-    fun connect() {
-        val config = _state.value
-        if (config.configServerAddress.isBlank()) {
-            _state.value = _state.value.copy(error = "请输入服务器地址")
-            return
-        }
-
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            try {
-                // 先建立连接
-                val success = repository.connect(
-                    serverAddress = config.configServerAddress,
-                    username = config.configUsername.ifEmpty { null },
-                    password = config.configPassword.ifEmpty { null }
-                )
-
-                if (!success) {
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        cacheAvailable = SmbCacheCatalog.hasCache(
-                            appContext, config.configServerAddress
-                        ),
-                        error = "无法连接到服务器，请检查地址和凭据"
-                    )
-                } else {
-                    val shareNames = preferences.loadShareNames()
-                    _state.value = _state.value.copy(
-                        serverAddress = config.configServerAddress,
-                        shares = shareNames,
-                        isLoading = false,
-                        isConnected = true,
-                        browseMode = NetworkBrowseMode.ONLINE,
-                        error = null
-                    )
-                    // 连接成功后保存配置
-                    preferences.saveConfig(
-                        PreferencesManager.SmbConnectionConfig(
-                            serverAddress = config.configServerAddress,
-                            username = config.configUsername,
-                            password = config.configPassword,
-                            shareNames = shareNames
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    cacheAvailable = SmbCacheCatalog.hasCache(
-                        appContext, config.configServerAddress
-                    ),
-                    error = "连接失败: ${e.message}"
-                )
-            }
-        }
-    }
-
-    /** 重新从配置加载共享名列表（设置页修改后返回时调用） */
+    /** 设置页返回时重载启用的服务器与共享，不主动连接离线服务器。 */
     fun refreshShares() {
-        if (_state.value.shareName.isEmpty() &&
-            _state.value.browseMode == NetworkBrowseMode.ONLINE
+        val previousConfigs = configs
+        val updatedConfigs = preferences.loadServerConfigs()
+        val current = _state.value
+        val previousActive = previousConfigs.firstOrNull { it.id == current.serverId }
+        val updatedActive = updatedConfigs.firstOrNull { it.id == current.serverId }
+        configs = updatedConfigs
+        if (current.shareName.isEmpty() || updatedActive == null || !updatedActive.enabled ||
+            previousActive != updatedActive
         ) {
-            _state.value = _state.value.copy(shares = preferences.loadShareNames())
+            _state.value = _state.value.copy(
+                shareTargets = buildTargets(configs),
+                serverId = "",
+                serverAddress = "",
+                shareName = "",
+                currentPath = "",
+                currentFolderName = "网络共享",
+                files = emptyList(),
+                isLoading = false,
+                isConnected = false,
+                browseMode = NetworkBrowseMode.ONLINE,
+                cacheAvailable = false,
+                error = null
+            )
         }
     }
 
-    fun openShare(shareName: String) {
+    fun openShare(target: NetworkShareTarget) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            try {
-                val config = _state.value
-                if (config.browseMode == NetworkBrowseMode.CACHE_ONLY) {
-                    val files = withContext(Dispatchers.IO) {
-                        SmbCacheCatalog.listDirectory(
-                            appContext, config.serverAddress, shareName, ""
-                        )
-                    }
-                    _state.value = config.copy(
-                        shareName = shareName,
-                        currentPath = "",
-                        currentFolderName = shareName,
-                        files = files,
-                        isLoading = false,
-                        error = null
-                    )
-                    return@launch
-                }
-                // 确保已连接
-                if (!repository.isConnected()) {
-                    val ok = repository.connect(
-                        serverAddress = config.serverAddress,
-                        username = config.configUsername.ifEmpty { null },
-                        password = config.configPassword.ifEmpty { null }
-                    )
-                    if (!ok) {
-                        _state.value = _state.value.copy(
-                            isLoading = false,
-                            error = "无法连接到服务器，请检查设置中的地址和凭据"
-                        )
-                        return@launch
-                    }
-                }
-                val files = annotateOnlineFiles(
-                    repository.listFiles(
-                        shareName,
-                        includeFolderCounts = showFolderCounts
-                    ),
-                    config.serverAddress,
-                    shareName
-                )
-                _state.value = _state.value.copy(
-                    shareName = shareName,
-                    currentPath = "",
-                    currentFolderName = shareName,
-                    files = files,
-                    isLoading = false
-                )
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    cacheAvailable = SmbCacheCatalog.hasCache(
-                        appContext, _state.value.serverAddress
-                    ),
-                    error = "打开共享失败: ${e.message}"
-                )
-            }
+            _state.value = _state.value.copy(
+                serverId = target.serverId,
+                serverAddress = target.serverAddress,
+                shareName = target.shareName,
+                currentPath = "",
+                currentFolderName = target.shareName,
+                files = emptyList(),
+                browseMode = NetworkBrowseMode.ONLINE,
+                isLoading = true,
+                error = null,
+                cacheAvailable = hasTargetCache(target.serverAddress, target.shareName)
+            )
+            if (!ensureConnected(target.serverId)) return@launch
+            loadOnlineDirectory("", target.shareName)
         }
     }
 
     fun navigateToFolder(folderPath: String, folderName: String) {
+        val current = _state.value
+        if (current.shareName.isEmpty()) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true)
+            _state.value = current.copy(isLoading = true, error = null)
             try {
-                val config = _state.value
-                val files = if (config.browseMode == NetworkBrowseMode.CACHE_ONLY) {
+                val files = if (current.browseMode == NetworkBrowseMode.CACHE_ONLY) {
                     withContext(Dispatchers.IO) {
                         SmbCacheCatalog.listDirectory(
-                            appContext, config.serverAddress, config.shareName, folderPath
+                            appContext, current.serverAddress, current.shareName, folderPath
                         )
                     }
                 } else {
                     annotateOnlineFiles(
                         repository.listFiles(
-                            config.shareName,
+                            current.serverAddress,
+                            current.shareName,
                             folderPath,
                             includeFolderCounts = showFolderCounts
                         ),
-                        config.serverAddress,
-                        config.shareName
+                        current.serverAddress,
+                        current.shareName
                     )
                 }
                 _state.value = _state.value.copy(
@@ -329,11 +175,10 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                     isLoading = false
                 )
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    cacheAvailable = SmbCacheCatalog.hasCache(
-                        appContext, _state.value.serverAddress
-                    ),
+                    cacheAvailable = hasTargetCache(current.serverAddress, current.shareName),
                     error = "浏览文件夹失败: ${e.message}"
                 )
             }
@@ -341,26 +186,15 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun navigateUp() {
-        val currentPath = _state.value.currentPath
+        val current = _state.value
         when {
-            currentPath.isEmpty() -> {
-                // 已在共享根目录 → 返回共享列表
-                _state.value = _state.value.copy(
-                    shareName = "",
-                    currentPath = "",
-                    currentFolderName = "共享文件夹",
-                    files = emptyList(),
-                    shares = _state.value.shares
-                )
+            current.currentPath.isEmpty() -> {
+                _state.value = NetworkBrowserState(shareTargets = buildTargets(configs))
             }
-            !currentPath.contains('/') -> {
-                // 单级子目录 → 返回共享根目录
-                navigateToFolder("", _state.value.shareName)
-            }
+            !current.currentPath.contains('/') -> navigateToFolder("", current.shareName)
             else -> {
-                // 多级子目录 → 返回上一级
-                val parentPath = currentPath.substringBeforeLast('/')
-                val parentName = parentPath.substringAfterLast('/').ifEmpty { _state.value.shareName }
+                val parentPath = current.currentPath.substringBeforeLast('/')
+                val parentName = parentPath.substringAfterLast('/').ifEmpty { current.shareName }
                 navigateToFolder(parentPath, parentName)
             }
         }
@@ -368,12 +202,8 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
 
     fun scrollKey(): String {
         val current = _state.value
-        val location = if (current.shareName.isEmpty()) {
-            "shares"
-        } else {
-            "${current.shareName}:${current.currentPath}"
-        }
-        return "network:${current.browseMode}:${current.serverAddress}:$location"
+        if (current.shareName.isEmpty()) return "network:shares"
+        return "network:${current.browseMode}:${current.serverId}:${current.shareName}:${current.currentPath}"
     }
 
     fun loadScrollPosition(key: String): Pair<Int, Int> = scrollPositions[key] ?: (0 to 0)
@@ -382,25 +212,18 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
         scrollPositions[key] = index to offset
     }
 
-    /** 设置变化时更新当前列表；开启统计需要重新读取目录，关闭时可直接移除数量。 */
     fun updateFolderCountSetting(show: Boolean) {
         if (showFolderCounts == show) return
         showFolderCounts = show
         val current = _state.value
         if (!show) {
-            _state.value = current.copy(
-                files = current.files.map { file ->
-                    if (file.isDirectory) {
-                        file.copy(
-                            childFileCount = null,
-                            childDirectoryCount = null,
-                            cachedChildFileCount = null
-                        )
-                    } else {
-                        file
-                    }
-                }
-            )
+            _state.value = current.copy(files = current.files.map { file ->
+                if (file.isDirectory) file.copy(
+                    childFileCount = null,
+                    childDirectoryCount = null,
+                    cachedChildFileCount = null
+                ) else file
+            })
         } else if (current.shareName.isNotEmpty()) {
             navigateToFolder(current.currentPath, current.currentFolderName)
         }
@@ -408,45 +231,104 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
 
     fun disconnect() {
         folderCacheJob?.cancel()
-        repository.disconnect()
-        val saved = _state.value.configServerAddress
-        _state.value = NetworkBrowserState(
-            configServerAddress = saved,
-            configUsername = _state.value.configUsername,
-            configPassword = _state.value.configPassword
-        )
+        repository.disconnectAll()
+        configs = preferences.loadServerConfigs()
+        _state.value = NetworkBrowserState(shareTargets = buildTargets(configs))
     }
 
-    /** 连接失败后切换到只读缓存模式。 */
+    /** 当前共享连接失败后，只读取该服务器和共享的完整缓存。 */
     fun enterCacheOnlyMode() {
         val current = _state.value
-        val server = current.configServerAddress.ifEmpty { current.serverAddress }
+        if (current.serverAddress.isEmpty() || current.shareName.isEmpty()) return
         viewModelScope.launch {
             _state.value = current.copy(isLoading = true, error = null)
-            val cachedShares = withContext(Dispatchers.IO) {
-                SmbCacheCatalog.listShareNames(appContext, server)
+            val files = withContext(Dispatchers.IO) {
+                SmbCacheCatalog.listDirectory(
+                    appContext, current.serverAddress, current.shareName, current.currentPath
+                )
             }
             _state.value = current.copy(
-                serverAddress = server,
-                shareName = "",
-                currentPath = "",
-                currentFolderName = "缓存共享",
-                files = emptyList(),
-                shares = cachedShares,
+                files = files,
                 isLoading = false,
                 isConnected = false,
                 browseMode = NetworkBrowseMode.CACHE_ONLY,
-                cacheAvailable = cachedShares.isNotEmpty(),
+                cacheAvailable = true,
                 error = null
             )
         }
     }
 
     fun retryConnection() {
-        preferences.loadConfig()?.let { autoConnect(it) }
+        val current = _state.value
+        if (current.serverId.isEmpty()) return
+        viewModelScope.launch {
+            _state.value = current.copy(isLoading = true, error = null, browseMode = NetworkBrowseMode.ONLINE)
+            repository.disconnect(current.serverAddress)
+            if (!ensureConnected(current.serverId)) return@launch
+            loadOnlineDirectory(current.currentPath, current.currentFolderName)
+        }
     }
 
-    /** 缓存指定文件夹中的全部受支持媒体文件。 */
+    private suspend fun ensureConnected(serverId: String): Boolean {
+        val config = configs.firstOrNull { it.id == serverId }
+        if (config == null) {
+            _state.value = _state.value.copy(isLoading = false, error = "服务器配置不存在或已被禁用")
+            return false
+        }
+        if (repository.isConnected(config.serverAddress)) {
+            _state.value = _state.value.copy(isConnected = true)
+            return true
+        }
+        var connected = false
+        for (attempt in 1..3) {
+            connected = repository.connect(
+                config.serverAddress,
+                config.username.ifEmpty { null },
+                config.password.ifEmpty { null }
+            )
+            if (connected) break
+            if (attempt < 3) kotlinx.coroutines.delay(1000L * attempt)
+        }
+        _state.value = _state.value.copy(
+            isConnected = connected,
+            isLoading = if (connected) _state.value.isLoading else false,
+            cacheAvailable = hasTargetCache(config.serverAddress, _state.value.shareName),
+            error = if (connected) null else "无法连接到服务器，请检查设置中的地址和凭据"
+        )
+        return connected
+    }
+
+    private suspend fun loadOnlineDirectory(path: String, folderName: String) {
+        val current = _state.value
+        try {
+            val files = annotateOnlineFiles(
+                repository.listFiles(
+                    current.serverAddress,
+                    current.shareName,
+                    path,
+                    includeFolderCounts = showFolderCounts
+                ),
+                current.serverAddress,
+                current.shareName
+            )
+            _state.value = _state.value.copy(
+                currentPath = path,
+                currentFolderName = folderName,
+                files = files,
+                isLoading = false,
+                isConnected = true,
+                error = null
+            )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            _state.value = _state.value.copy(
+                isLoading = false,
+                cacheAvailable = hasTargetCache(current.serverAddress, current.shareName),
+                error = "打开共享失败: ${e.message}"
+            )
+        }
+    }
+
     fun cacheFolder(folder: ImageFile) {
         val current = _state.value
         if (current.browseMode != NetworkBrowseMode.ONLINE || folderCacheJob?.isActive == true) return
@@ -466,6 +348,7 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                     )
                 )
                 val files = repository.listMediaFilesRecursively(
+                    serverAddress = server,
                     shareName = share,
                     folderPath = folder.path,
                     onScanningDirectory = { path ->
@@ -485,7 +368,6 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                         totalBytes = totalBytes
                     )
                 )
-
                 val semaphore = Semaphore(3)
                 coroutineScope {
                     files.map { file ->
@@ -529,7 +411,7 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                 }
                 val progress = _state.value.folderCacheProgress
                 _state.value = _state.value.copy(
-                    cacheAvailable = SmbCacheCatalog.hasCache(appContext, server),
+                    cacheAvailable = hasTargetCache(server, share),
                     folderCacheProgress = progress?.copy(
                         phase = FolderCachePhase.COMPLETED,
                         currentFileName = "",
@@ -540,24 +422,14 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
                     )
                 )
             } catch (e: CancellationException) {
-                val progress = _state.value.folderCacheProgress
-                _state.value = _state.value.copy(
-                    files = annotateOnlineFiles(_state.value.files, server, share),
-                    cacheAvailable = SmbCacheCatalog.hasCache(appContext, server),
-                    folderCacheProgress = progress?.copy(
-                        phase = FolderCachePhase.CANCELLED,
-                        currentFileName = "",
-                        completedFiles = completed.get(),
-                        downloadedBytes = downloadedByPath.values.sum(),
-                        skippedFiles = skipped.get(),
-                        failedFiles = failed.get()
-                    )
-                )
+                withContext(NonCancellable) {
+                    finishCancelledCache(server, share, completed, skipped, failed, downloadedByPath)
+                }
             } catch (e: Exception) {
                 val progress = _state.value.folderCacheProgress
                 _state.value = _state.value.copy(
                     files = annotateOnlineFiles(_state.value.files, server, share),
-                    cacheAvailable = SmbCacheCatalog.hasCache(appContext, server),
+                    cacheAvailable = hasTargetCache(server, share),
                     folderCacheProgress = progress?.copy(
                         phase = FolderCachePhase.COMPLETED,
                         currentFileName = "",
@@ -569,13 +441,34 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
         }
     }
 
+    private suspend fun finishCancelledCache(
+        server: String,
+        share: String,
+        completed: AtomicInteger,
+        skipped: AtomicInteger,
+        failed: AtomicInteger,
+        downloadedByPath: ConcurrentHashMap<String, Long>
+    ) {
+        val progress = _state.value.folderCacheProgress
+        _state.value = _state.value.copy(
+            files = annotateOnlineFiles(_state.value.files, server, share),
+            cacheAvailable = hasTargetCache(server, share),
+            folderCacheProgress = progress?.copy(
+                phase = FolderCachePhase.CANCELLED,
+                currentFileName = "",
+                completedFiles = completed.get(),
+                downloadedBytes = downloadedByPath.values.sum(),
+                skippedFiles = skipped.get(),
+                failedFiles = failed.get()
+            )
+        )
+    }
+
     fun cancelFolderCaching() {
         val progress = _state.value.folderCacheProgress ?: return
         if (progress.phase == FolderCachePhase.SCANNING ||
             progress.phase == FolderCachePhase.DOWNLOADING
         ) {
-            // SMBJ 读取属于阻塞调用，协程取消与底层句柄收尾可能存在短暂延迟。
-            // 先立即结束模态等待，避免界面被“正在取消”状态锁住。
             _state.value = _state.value.copy(
                 folderCacheProgress = progress.copy(
                     phase = FolderCachePhase.CANCELLED,
@@ -616,6 +509,21 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
         )
     }
 
+    private fun buildTargets(configs: List<PreferencesManager.SmbServerConfig>): List<NetworkShareTarget> =
+        configs.asSequence()
+            .filter { it.enabled }
+            .flatMap { config ->
+                config.shareNames.asSequence().map { share ->
+                    NetworkShareTarget(config.id, config.serverAddress, share)
+                }
+            }
+            .toList()
+
+    private suspend fun hasTargetCache(serverAddress: String, shareName: String): Boolean =
+        withContext(Dispatchers.IO) {
+            SmbCacheCatalog.listShareNames(appContext, serverAddress).contains(shareName)
+        }
+
     private suspend fun annotateOnlineFiles(
         files: List<ImageFile>,
         serverAddress: String,
@@ -623,15 +531,11 @@ class NetworkBrowserViewModel(application: Application) : AndroidViewModel(appli
     ): List<ImageFile> = withContext(Dispatchers.IO) {
         files.map { file ->
             if (file.isDirectory) {
-                if (showFolderCounts) {
-                    file.copy(
-                        cachedChildFileCount = SmbCacheCatalog.getDirectCachedFileCount(
-                            appContext, serverAddress, shareName, file.path
-                        )
+                if (showFolderCounts) file.copy(
+                    cachedChildFileCount = SmbCacheCatalog.getDirectCachedFileCount(
+                        appContext, serverAddress, shareName, file.path
                     )
-                } else {
-                    file.copy(cachedChildFileCount = null)
-                }
+                ) else file.copy(cachedChildFileCount = null)
             } else {
                 file.copy(
                     localCachePath = SmbImageLoader.getCachePath(

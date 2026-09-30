@@ -86,7 +86,7 @@ fun NetworkBrowserScreen(
     LaunchedEffect(Unit) { viewModel.refreshShares() }
 
     // 拦截系统返回键
-    BackHandler(enabled = state.isConnected || state.browseMode == NetworkBrowseMode.CACHE_ONLY) {
+    BackHandler {
         if (state.shareName.isNotEmpty()) {
             saveCurrentScrollPosition()
             viewModel.navigateUp()
@@ -113,20 +113,16 @@ fun NetworkBrowserScreen(
                 )
             },
             navigationIcon = {
-                if (state.shareName.isNotEmpty() || state.isConnected ||
-                    state.browseMode == NetworkBrowseMode.CACHE_ONLY
-                ) {
-                    IconButton(onClick = {
-                        if (state.shareName.isNotEmpty()) {
-                            saveCurrentScrollPosition()
-                            viewModel.navigateUp()
-                        } else {
-                            viewModel.disconnect()
-                            onNavigateBack()
-                        }
-                    }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                IconButton(onClick = {
+                    if (state.shareName.isNotEmpty()) {
+                        saveCurrentScrollPosition()
+                        viewModel.navigateUp()
+                    } else {
+                        viewModel.disconnect()
+                        onNavigateBack()
                     }
+                }) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                 }
             },
             actions = {
@@ -135,10 +131,8 @@ fun NetworkBrowserScreen(
                         Icon(Icons.Default.Refresh, contentDescription = "重新连接")
                     }
                 }
-                if (state.isConnected || state.browseMode == NetworkBrowseMode.CACHE_ONLY) {
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
-                    }
+                IconButton(onClick = onNavigateToSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "设置")
                 }
             }
         )
@@ -197,7 +191,7 @@ fun NetworkBrowserScreen(
                     CircularProgressIndicator()
                 }
             }
-            state.shareName.isEmpty() && state.shares.isNotEmpty() -> {
+            state.shareName.isEmpty() && state.shareTargets.isNotEmpty() -> {
                 // 显示已配置的共享文件夹列表
                 Box(modifier = Modifier.fillMaxSize()) {
                     LazyVerticalGrid(
@@ -207,14 +201,17 @@ fun NetworkBrowserScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        items(state.shares, key = { it }) { share ->
+                        items(
+                            state.shareTargets,
+                            key = { "${it.serverId}/${it.shareName}" }
+                        ) { target ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(1f)
                                     .clickable {
                                         saveCurrentScrollPosition()
-                                        viewModel.openShare(share)
+                                        viewModel.openShare(target)
                                     },
                                 colors = CardDefaults.cardColors(
                                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
@@ -236,10 +233,17 @@ fun NetworkBrowserScreen(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = share,
+                                            text = target.shareName,
                                             maxLines = 2,
                                             overflow = TextOverflow.Ellipsis,
                                             style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = target.serverAddress,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -321,7 +325,7 @@ fun NetworkBrowserScreen(
                     )
                 }
             }
-            state.shareName.isEmpty() && state.shares.isEmpty() -> {
+            state.shareName.isEmpty() && state.shareTargets.isEmpty() -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -330,7 +334,7 @@ fun NetworkBrowserScreen(
                         text = if (state.browseMode == NetworkBrowseMode.CACHE_ONLY) {
                             "没有可读取的缓存"
                         } else {
-                            "尚未配置共享名，请到设置中添加"
+                            "尚未启用服务器或配置共享名，请到设置中添加"
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

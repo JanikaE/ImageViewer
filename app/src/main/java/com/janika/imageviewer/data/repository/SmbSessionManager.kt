@@ -1,12 +1,13 @@
 package com.janika.imageviewer.data.repository
 
+import android.util.Log
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.SmbConfig
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.common.SMBRuntimeException
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
-import com.hierynomus.smbj.common.SMBRuntimeException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,125 +15,104 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * SMB 会话管理器 - 持有 SMBJ 的连接/会话/共享，供浏览与下载共用。
+ * 按服务器地址隔离的 SMBJ 会话池。
  *
- * 认证只在 [connect] 时进行一次，之后通过 [getDiskShare] 复用已认证的共享，
- * 不再需要 jcifs-ng 那套"共享上下文 + 逐文件认证回退"。
+ * 每台服务器独立持有 SMBClient、Connection、Session 与共享缓存；连接或关闭某台服务器
+ * 不会影响其他服务器。所有文件读取都必须同时提供服务器地址和共享名。
  */
 object SmbSessionManager {
-
-    private val lock = Any()
-
-    private var client: SMBClient? = null
-    private var connection: Connection? = null
-    private var session: Session? = null
-
-    private val shares = ConcurrentHashMap<String, DiskShare>()
-
-    /** 是否已建立连接 */
-    fun isConnected(): Boolean {
-        val conn = connection
-        return conn != null && conn.isConnected && session != null
+    private class SessionHolder {
+        val lock = Any()
+        var credentialKey: String = ""
+        var client: SMBClient? = null
+        var connection: Connection? = null
+        var session: Session? = null
+        val shares = ConcurrentHashMap<String, DiskShare>()
     }
 
-    /**
-     * 建立连接并认证。共享名不在连接时校验，浏览时才按需 connectShare。
-     * 阻塞网络操作，必须在 IO 线程执行。
-     */
+    private val holders = ConcurrentHashMap<String, SessionHolder>()
+
+    fun isConnected(serverAddress: String): Boolean {
+        val holder = holders[serverAddress.trim()] ?: return false
+        val connection = holder.connection
+        return connection != null && connection.isConnected && holder.session != null
+    }
+
     suspend fun connect(
         serverAddress: String,
         username: String?,
         password: String?,
         domain: String?
     ): Boolean = withContext(Dispatchers.IO) {
-        synchronized(lock) {
-            disconnect()
+        val address = serverAddress.trim()
+        if (address.isEmpty()) return@withContext false
+        val key = listOf(username.orEmpty(), password.orEmpty(), domain.orEmpty()).joinToString("\u0000")
+        val holder = holders.computeIfAbsent(address) { SessionHolder() }
+        synchronized(holder.lock) {
+            if (holder.credentialKey == key && holder.connection?.isConnected == true &&
+                holder.session != null
+            ) {
+                return@synchronized true
+            }
+            closeQuietly(holder)
             try {
-                val c = SMBClient(buildConfig())
-                val conn = c.connect(serverAddress)
+                val client = SMBClient(buildConfig())
+                holder.client = client
+                val connection = client.connect(address)
+                holder.connection = connection
                 val auth = if (!username.isNullOrEmpty()) {
-                    AuthenticationContext(username, (password ?: "").toCharArray(), domain ?: "")
+                    AuthenticationContext(username, password.orEmpty().toCharArray(), domain.orEmpty())
                 } else {
                     AuthenticationContext.anonymous()
                 }
-                val s = conn.authenticate(auth)
-                client = c
-                connection = conn
-                session = s
-                shares.clear()
-                // 打印协商结果，便于判断服务器实际读块上限与是否启用大读块
-                val proto = conn.getNegotiatedProtocol()
-                android.util.Log.i(
+                val session = connection.authenticate(auth)
+                holder.session = session
+                holder.credentialKey = key
+                val protocol = connection.getNegotiatedProtocol()
+                Log.i(
                     "SmbSessionManager",
-                    "连接成功: $serverAddress, dialect=${proto.dialect}, " +
-                        "maxRead=${proto.maxReadSize}, maxWrite=${proto.maxWriteSize}, " +
-                        "maxTransact=${proto.maxTransactSize}"
+                    "连接成功: $address, dialect=${protocol.dialect}, " +
+                        "maxRead=${protocol.maxReadSize}, maxWrite=${protocol.maxWriteSize}, " +
+                        "maxTransact=${protocol.maxTransactSize}"
                 )
                 true
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                android.util.Log.e("SmbSessionManager", "连接失败: $serverAddress", e)
-                closeQuietly()
+                if (e is CancellationException) {
+                    closeQuietly(holder)
+                    throw e
+                }
+                Log.e("SmbSessionManager", "连接失败: $address", e)
+                closeQuietly(holder)
                 false
             }
         }
     }
 
-    /**
-     * 获取（并按需建立）指定共享的 DiskShare。下载与浏览共用。
-     */
-    fun getDiskShare(shareName: String): DiskShare {
-        val cur = session ?: throw SMBRuntimeException("尚未连接 SMB 服务器")
-        synchronized(lock) {
-            shares[shareName]?.let { if (it.isConnected) return it }
-            val share = cur.connectShare(shareName)
+    fun getDiskShare(serverAddress: String, shareName: String): DiskShare {
+        val address = serverAddress.trim()
+        val holder = holders[address] ?: throw SMBRuntimeException("尚未连接 SMB 服务器: $address")
+        synchronized(holder.lock) {
+            holder.shares[shareName]?.let { if (it.isConnected) return it }
+            val session = holder.session ?: throw SMBRuntimeException("尚未连接 SMB 服务器: $address")
+            val share = session.connectShare(shareName)
             if (share !is DiskShare) {
                 share.close()
                 throw SMBRuntimeException("$shareName 不是磁盘共享")
             }
-            shares[shareName] = share
+            holder.shares[shareName] = share
             return share
         }
     }
 
-    /** 断开连接并释放全部资源 */
-    fun disconnect() {
-        synchronized(lock) {
-            closeQuietly()
-        }
+    fun disconnect(serverAddress: String) {
+        val holder = holders.remove(serverAddress.trim()) ?: return
+        synchronized(holder.lock) { closeQuietly(holder) }
     }
 
-    private fun closeQuietly() {
-        try {
-            shares.values.forEach {
-                try {
-                    it.close()
-                } catch (_: Exception) {
-                }
-            }
-        } catch (_: Exception) {
-        }
-        shares.clear()
-        try {
-            session?.close()
-        } catch (_: Exception) {
-        }
-        try {
-            connection?.close()
-        } catch (_: Exception) {
-        }
-        try {
-            client?.close()
-        } catch (_: Exception) {
-        }
-        session = null
-        connection = null
-        client = null
+    fun disconnectAll() {
+        holders.keys.toList().forEach(::disconnect)
     }
 
-    /**
-     * 设置页的连接测试：验证服务器 + 凭据，可选校验一个共享名。
-     */
     fun testConnection(
         serverAddress: String,
         username: String?,
@@ -140,35 +120,43 @@ object SmbSessionManager {
         domain: String?,
         shareName: String? = null
     ): Boolean {
-        var conn: Connection? = null
+        var client: SMBClient? = null
+        var connection: Connection? = null
+        var session: Session? = null
         return try {
-            val c = SMBClient(buildConfig())
-            val connection = c.connect(serverAddress)
-            conn = connection
+            client = SMBClient(buildConfig())
+            connection = client.connect(serverAddress.trim())
             val auth = if (!username.isNullOrEmpty()) {
-                AuthenticationContext(username, (password ?: "").toCharArray(), domain ?: "")
+                AuthenticationContext(username, password.orEmpty().toCharArray(), domain.orEmpty())
             } else {
                 AuthenticationContext.anonymous()
             }
-            val session = connection.authenticate(auth)
-            if (!shareName.isNullOrBlank()) {
-                session.connectShare(shareName).close()
-            }
-            session.close()
-            connection.close()
+            session = connection.authenticate(auth)
+            if (!shareName.isNullOrBlank()) session.connectShare(shareName).close()
             true
         } catch (e: Exception) {
-            android.util.Log.w("SmbSessionManager", "连接测试失败: $serverAddress", e)
-            try {
-                conn?.close()
-            } catch (_: Exception) {
-            }
+            Log.w("SmbSessionManager", "连接测试失败: $serverAddress", e)
             false
+        } finally {
+            try { session?.close() } catch (_: Exception) {}
+            try { connection?.close() } catch (_: Exception) {}
+            try { client?.close() } catch (_: Exception) {}
         }
     }
 
-    private fun buildConfig(): SmbConfig =
-        SmbConfig.builder()
-            .withTimeout(30, TimeUnit.SECONDS)
-            .build()
+    private fun closeQuietly(holder: SessionHolder) {
+        holder.shares.values.forEach { try { it.close() } catch (_: Exception) {} }
+        holder.shares.clear()
+        try { holder.session?.close() } catch (_: Exception) {}
+        try { holder.connection?.close() } catch (_: Exception) {}
+        try { holder.client?.close() } catch (_: Exception) {}
+        holder.session = null
+        holder.connection = null
+        holder.client = null
+        holder.credentialKey = ""
+    }
+
+    private fun buildConfig(): SmbConfig = SmbConfig.builder()
+        .withTimeout(30, TimeUnit.SECONDS)
+        .build()
 }

@@ -178,7 +178,7 @@ object SmbImageLoader {
         concurrency: Int
     ): String? {
         return try {
-            val share = SmbSessionManager.getDiskShare(shareName)
+            val share = SmbSessionManager.getDiskShare(serverAddress, shareName)
             share.openFile(
                 filePath,
                 setOf(AccessMask.GENERIC_READ),

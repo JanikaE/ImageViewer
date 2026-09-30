@@ -396,7 +396,7 @@ private suspend fun buildMediaSource(
             uri = Uri.fromFile(File(local))
         } else {
             // 流式播放：SMBJ 随机读 DataSource
-            dataSourceFactory = SmbVideoDataSourceFactory(share, path, onBytesRead)
+            dataSourceFactory = SmbVideoDataSourceFactory(server, share, path, onBytesRead)
             uri = Uri.parse("smb://$server/$share/$path")
         }
     } else {
@@ -411,11 +411,13 @@ private suspend fun buildMediaSource(
 /** SMB 流式数据源工厂 */
 @UnstableApi
 private class SmbVideoDataSourceFactory(
+    private val serverAddress: String,
     private val shareName: String,
     private val filePath: String,
     private val onBytesRead: (Long) -> Unit
 ) : DataSource.Factory {
-    override fun createDataSource(): DataSource = SmbVideoDataSource(shareName, filePath, onBytesRead)
+    override fun createDataSource(): DataSource =
+        SmbVideoDataSource(serverAddress, shareName, filePath, onBytesRead)
 }
 
 private fun formatSpeed(bps: Long): String = when {

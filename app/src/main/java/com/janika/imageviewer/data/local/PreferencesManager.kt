@@ -2,6 +2,10 @@ package com.janika.imageviewer.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 
 /**
  * 应用配置的本地持久化存储（SMB连接 + 应用设置）
@@ -13,36 +17,72 @@ class PreferencesManager(context: Context) {
     private val settingsPrefs: SharedPreferences =
         context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
 
-    data class SmbConnectionConfig(
+    data class SmbServerConfig(
+        val id: String,
         val serverAddress: String,
         val username: String,
         val password: String,
+        val enabled: Boolean = true,
         /** 已配置的共享名列表（手动维护，不做自动枚举） */
         val shareNames: List<String> = emptyList()
     )
 
-    fun saveConfig(config: SmbConnectionConfig) {
-        prefs.edit()
-            .putString(KEY_SERVER_ADDRESS, config.serverAddress)
-            .putString(KEY_USERNAME, config.username)
-            .putString(KEY_PASSWORD, config.password)
-            .putString(KEY_SHARE_NAMES, encodeShareNames(config.shareNames))
-            .apply()
-    }
+    /**
+     * 加载全部服务器配置。首次读取新版数据时，会把旧版单服务器配置迁移为一条启用记录。
+     */
+    fun loadServerConfigs(): List<SmbServerConfig> {
+        val raw = prefs.getString(KEY_SERVERS_V2, null)
+        if (!raw.isNullOrBlank()) {
+            try {
+                val array = JSONArray(raw)
+                return (0 until array.length()).mapNotNull { index ->
+                    val item = array.optJSONObject(index) ?: return@mapNotNull null
+                    val address = item.optString("serverAddress").trim()
+                    if (address.isEmpty()) return@mapNotNull null
+                    SmbServerConfig(
+                        id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
+                        serverAddress = address,
+                        username = item.optString("username"),
+                        password = item.optString("password"),
+                        enabled = item.optBoolean("enabled", true),
+                        shareNames = decodeShareNames(item.optJSONArray("shareNames"))
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("PreferencesManager", "多服务器配置解析失败，尝试迁移旧配置", e)
+            }
+        }
 
-    fun loadConfig(): SmbConnectionConfig? {
-        val server = prefs.getString(KEY_SERVER_ADDRESS, null)
-        if (server.isNullOrBlank()) return null
-        return SmbConnectionConfig(
-            serverAddress = server,
-            username = prefs.getString(KEY_USERNAME, "") ?: "",
-            password = prefs.getString(KEY_PASSWORD, "") ?: "",
-            shareNames = loadShareNames()
+        val legacyAddress = prefs.getString(KEY_SERVER_ADDRESS, null)?.trim().orEmpty()
+        if (legacyAddress.isEmpty()) return emptyList()
+        val migrated = listOf(
+            SmbServerConfig(
+                id = UUID.randomUUID().toString(),
+                serverAddress = legacyAddress,
+                username = prefs.getString(KEY_USERNAME, "") ?: "",
+                password = prefs.getString(KEY_PASSWORD, "") ?: "",
+                enabled = true,
+                shareNames = decodeShareNames(prefs.getString(KEY_SHARE_NAMES, null))
+            )
         )
+        saveServerConfigs(migrated)
+        return migrated
     }
 
-    fun clearConfig() {
+    fun saveServerConfigs(configs: List<SmbServerConfig>) {
+        val array = JSONArray()
+        configs.forEach { config ->
+            array.put(JSONObject().apply {
+                put("id", config.id)
+                put("serverAddress", config.serverAddress.trim())
+                put("username", config.username)
+                put("password", config.password)
+                put("enabled", config.enabled)
+                put("shareNames", JSONArray(config.shareNames))
+            })
+        }
         prefs.edit()
+            .putString(KEY_SERVERS_V2, array.toString())
             .remove(KEY_SERVER_ADDRESS)
             .remove(KEY_USERNAME)
             .remove(KEY_PASSWORD)
@@ -50,30 +90,44 @@ class PreferencesManager(context: Context) {
             .apply()
     }
 
-    /** 加载已保存的共享名列表 */
-    fun loadShareNames(): List<String> {
-        return decodeShareNames(prefs.getString(KEY_SHARE_NAMES, null))
+    fun upsertServerConfig(config: SmbServerConfig) {
+        val normalized = config.copy(
+            serverAddress = config.serverAddress.trim(),
+            shareNames = config.shareNames
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinctBy { it.lowercase() }
+        )
+        val configs = loadServerConfigs().toMutableList()
+        val index = configs.indexOfFirst { it.id == normalized.id }
+        if (index >= 0) configs[index] = normalized else configs += normalized
+        saveServerConfigs(configs)
     }
 
-    /** 保存共享名列表 */
-    fun saveShareNames(shareNames: List<String>) {
-        prefs.edit().putString(KEY_SHARE_NAMES, encodeShareNames(shareNames)).apply()
+    fun removeServerConfig(id: String) {
+        saveServerConfigs(loadServerConfigs().filterNot { it.id == id })
     }
 
-    private fun encodeShareNames(names: List<String>): String {
-        val arr = org.json.JSONArray()
-        names.forEach { arr.put(it) }
-        return arr.toString()
+    fun setServerEnabled(id: String, enabled: Boolean) {
+        saveServerConfigs(loadServerConfigs().map { config ->
+            if (config.id == id) config.copy(enabled = enabled) else config
+        })
     }
 
     private fun decodeShareNames(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
         return try {
-            val arr = org.json.JSONArray(raw)
-            (0 until arr.length()).map { arr.getString(it) }
+            decodeShareNames(JSONArray(raw))
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    private fun decodeShareNames(array: JSONArray?): List<String> {
+        if (array == null) return emptyList()
+        return (0 until array.length())
+            .mapNotNull { array.optString(it).trim().takeIf(String::isNotEmpty) }
+            .distinctBy { it.lowercase() }
     }
 
     // ── 应用设置 ──
@@ -150,6 +204,7 @@ class PreferencesManager(context: Context) {
         private const val KEY_USERNAME = "username"
         private const val KEY_PASSWORD = "password"
         private const val KEY_SHARE_NAMES = "share_names"
+        private const val KEY_SERVERS_V2 = "servers_v2"
         private const val KEY_SWIPE_DIRECTION = "swipe_right_to_left"
         private const val KEY_LABEL_FONT_SCALE = "label_font_scale"
         private const val KEY_LABEL_MAX_LINES = "label_max_lines"

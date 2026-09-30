@@ -47,23 +47,23 @@
 - 本地目录列表隐藏名称以 `.` 开头的文件夹，只显示受支持的媒体文件；目录排在文件前，再按名称的小写形式排序。
 - 本地与网络目录预览都只查找目录直属层级中的第一张受支持图片，不递归搜索；网络目录会并发查询直属子目录预览。
 - 本地与网络文件网格在内容超出可视区域时，通过 `LazyGridScrollbar` 在右侧显示位置指示条；没有可滚动内容时不显示滚动条。
-- `LocalBrowserViewModel` 与 `NetworkBrowserViewModel` 按目录键在内存中保存 `LazyGridState` 的首个可见项目索引和像素偏移。进入子文件夹后返回必须恢复离开上级目录时的位置；本地根目录、网络共享列表、不同共享目录以及 `ONLINE`/`CACHE_ONLY` 模式的位置必须相互独立。该状态只要求在当前 ViewModel 生命周期内保留，不持久化到应用重启之后。
+- `LocalBrowserViewModel` 与 `NetworkBrowserViewModel` 按目录键在内存中保存 `LazyGridState` 的首个可见项目索引和像素偏移。进入子文件夹后返回必须恢复离开上级目录时的位置；本地根目录、网络共享聚合列表、不同服务器/共享目录以及 `ONLINE`/`CACHE_ONLY` 模式的位置必须相互独立。该状态只要求在当前 ViewModel 生命周期内保留，不持久化到应用重启之后。
 - 支持的图片扩展名为 `png`、`jpg`、`jpeg`、`webp`、`gif`；支持的视频扩展名为 `mp4`、`mkv`、`m4v`、`webm`、`3gp`、`avi`、`mov`、`ts`、`m2ts`、`flv`、`wmv`、`ogv`。
 - Manifest 是权限分版本的事实来源：`READ_MEDIA_IMAGES` 用于 API 33+，`READ_EXTERNAL_STORAGE` 限制到 API 32，同时声明网络相关权限。`usesCleartextTraffic="true"` 是 SMB 连接所需配置。
 
 ## 偏好设置与持久化
 
-- `PreferencesManager` 使用两个 SharedPreferences 文件：`smb_connection_prefs` 保存服务器地址、用户名、密码和 JSON 编码的共享名列表；`app_settings` 保存界面、下载和视频设置。
+- `PreferencesManager` 使用两个 SharedPreferences 文件：`smb_connection_prefs` 的 `servers_v2` 以 JSON 数组保存多台服务器的稳定 ID、地址、用户名、密码、启用状态与各自的共享名列表；`app_settings` 保存界面、下载和视频设置。首次读取时会把旧版单服务器键迁移为一条启用记录并移除旧键；损坏的新版 JSON 会记录日志并继续尝试旧配置迁移。
 - 当前设置项包括 `swipe_right_to_left`、`label_font_scale`、`label_max_lines`、`show_folder_counts`、`segment_concurrency`、`video_play_mode`、`keep_screen_on`。文件夹内容数量默认显示；关闭后本地与网络浏览都应跳过目录数量统计，避免无用的文件系统或 SMB 查询。大图分段并发度默认 5、范围 1..16；网络视频默认流式播放；播放时默认保持屏幕常亮。
 - SMB 密码目前按普通字符串存储，并未使用加密存储；`allowBackup="true"` 且备份规则仍为模板状态。涉及凭据或备份策略的修改必须同时检查 `AndroidManifest.xml`、`backup_rules.xml`、`data_extraction_rules.xml` 与兼容迁移，不能默认现有数据已经加密或排除备份。
 
 ## SMB 层（SMBJ，谨慎修改）
 
 - 使用 SMBJ 0.14.0（`com.hierynomus:smbj`）和 `slf4j-nop`。Android 没有默认 SLF4J 绑定，不能随意移除后者。
-- `SmbSessionManager` 单例持有 `SMBClient` → `Connection` → `Session`，认证只在 `connect()` 中通过 `AuthenticationContext` 完成一次；`getDiskShare(shareName)` 按需连接并缓存 `DiskShare`。`SmbRepository`、`SmbImageLoader` 和 `SmbVideoDataSource` 必须复用该会话，不要重新引入逐文件认证回退。
-- SMBJ 没有服务器共享自动枚举 API。共享名由用户在设置页手动维护，存放于 `PreferencesManager.SmbConnectionConfig.shareNames`，网络页直接展示该列表。
-- `NetworkBrowserViewModel` 冷启动有保存配置时会自动连接，最多尝试 3 次，重试间隔依次为 1 秒、2 秒；不要在 UI 线程执行阻塞式 SMB 操作。
-- 网络浏览有 `ONLINE` 与 `CACHE_ONLY` 两种模式。初始连接、打开共享或浏览目录失败且存在有效缓存时，用户可选择读取缓存；缓存模式只展示从缓存元数据重建的共享、目录和媒体文件，并提供显式重新连接入口。
+- `SmbSessionManager` 是按规范化服务器地址分组的会话池，每台服务器独立持有 `SMBClient` → `Connection` → `Session` 与 `DiskShare` 缓存并使用独立锁。认证只在 `connect(serverAddress, ...)` 中完成；所有浏览、图片下载与视频流必须通过 `getDiskShare(serverAddress, shareName)` 选择会话，禁止退回只按共享名取全局会话或逐文件认证。
+- SMBJ 没有服务器共享自动枚举 API。共享名由用户在设置页按服务器手动维护，存放于 `PreferencesManager.SmbServerConfig.shareNames`；同一服务器地址不可重复，同一服务器内共享名不可重复，不同服务器允许存在同名共享。
+- 网络页根层级聚合展示所有启用服务器的全部共享，并同时显示共享名和服务器地址；列表键与滚动位置键必须包含稳定服务器 ID，不能只使用共享名。进入网络页不预先连接全部服务器，用户打开共享时才按需连接所属服务器；连接最多尝试 3 次，重试间隔依次为 1 秒、2 秒，不要在 UI 线程执行阻塞式 SMB 操作。
+- 网络浏览有 `ONLINE` 与 `CACHE_ONLY` 两种模式。打开共享或浏览目录失败且当前服务器/共享存在有效缓存时，用户可选择只读取该目标的缓存，并提供显式重新连接入口；一台服务器失败不得遮挡或断开其他服务器。禁用或删除服务器配置只断开对应会话且不删除已有缓存。
 - `SmbRepository.listFiles()` 必须向上抛出目录读取异常，不能再把异常统一转换为空列表，否则 UI 无法区分“空目录”和“连接失败”。`listMediaFilesRecursively()` 用于批量缓存，只递归非隐藏目录并收集受支持的图片和视频。
 - `DiskShare.openFile(...)` 返回 SMBJ 的 `File`，通过 `file.read(buffer, offset)` 或带缓冲区区间的重载按偏移读取。SMBJ 会把单次读取限制在客户端配置和服务器 `maxReadSize` 的较小值，大缓冲不会复现 jcifs-ng 的 `STATUS_INVALID_PARAMETER` 问题。
 - SMBJ 0.14.0 的 `File` 没有 `getLength()`；文件长度使用 `file.getFileInformation(FileStandardInformation::class.java).endOfFile`。
